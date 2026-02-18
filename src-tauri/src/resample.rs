@@ -1,15 +1,13 @@
-use rubato::{
-    Resampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
 use std::sync::Mutex;
 
-/// High-quality audio resampler using the rubato crate
+/// Audio resampler using linear interpolation
 /// Handles conversion between 48kHz (typical audio device) and 8kHz (VoIP standard)
+/// Simple but effective - works with any buffer size
 pub struct AudioResampler {
-    /// Resampler for downsampling (48kHz → 8kHz) for TX
-    downsampler: Mutex<SincFixedOut<f32>>,
-    /// Resampler for upsampling (8kHz → 48kHz) for RX
-    upsampler: Mutex<SincFixedOut<f32>>,
+    input_rate: u32,
+    output_rate: u32,
+    /// Position tracker for downsampling (to maintain phase across chunks)
+    downsample_position: Mutex<f64>,
 }
 
 impl AudioResampler {
@@ -18,63 +16,18 @@ impl AudioResampler {
     /// # Arguments
     /// * `input_rate` - Input sample rate (typically 48000 Hz for audio devices)
     /// * `output_rate` - Output sample rate (typically 8000 Hz for VoIP)
-    /// * `chunk_size` - Number of samples per chunk (e.g., 960 for 20ms at 48kHz)
-    pub fn new(input_rate: u32, output_rate: u32, chunk_size: usize) -> Result<Self, String> {
-        // Create high-quality sinc interpolation parameters for downsampler
-        let downsample_params = SincInterpolationParameters {
-            sinc_len: 256,
-            f_cutoff: 0.95,
-            interpolation: SincInterpolationType::Linear,
-            oversampling_factor: 256,
-            window: WindowFunction::BlackmanHarris2,
-        };
-
-        // Calculate output chunk size for downsampler (48kHz → 8kHz)
-        // For 480 input samples at 48kHz, we get 80 output samples at 8kHz
-        let downsample_output_size = (chunk_size as f64 * output_rate as f64 / input_rate as f64).ceil() as usize;
-        
-        // Create downsampler (48kHz → 8kHz) with fixed output size
-        let downsampler = SincFixedOut::<f32>::new(
-            output_rate as f64 / input_rate as f64,
-            2.0, // max_resample_ratio_relative
-            downsample_params,
-            downsample_output_size,
-            1, // mono channel
-        )
-        .map_err(|e| format!("Failed to create downsampler: {:?}", e))?;
-
-        // Create high-quality sinc interpolation parameters for upsampler
-        let upsample_params = SincInterpolationParameters {
-            sinc_len: 256,
-            f_cutoff: 0.95,
-            interpolation: SincInterpolationType::Linear,
-            oversampling_factor: 256,
-            window: WindowFunction::BlackmanHarris2,
-        };
-
-        // Calculate output chunk size for upsampler (8kHz → 48kHz)
-        // For 160 input samples at 8kHz, we get 960 output samples at 48kHz
-        let upsample_output_size = (160 * 6); // 160 samples * 6 = 960 samples
-        
-        // Create upsampler (8kHz → 48kHz) with fixed output size
-        let upsampler = SincFixedOut::<f32>::new(
-            input_rate as f64 / output_rate as f64,
-            2.0, // max_resample_ratio_relative
-            upsample_params,
-            upsample_output_size,
-            1, // mono channel
-        )
-        .map_err(|e| format!("Failed to create upsampler: {:?}", e))?;
-
+    /// * `_chunk_size` - Unused, kept for API compatibility
+    pub fn new(input_rate: u32, output_rate: u32, _chunk_size: usize) -> Result<Self, String> {
         tracing::info!(
-            "[Resample] Created resampler: {}Hz ↔ {}Hz (accepts variable input sizes)",
+            "[Resample] Created resampler: {}Hz ↔ {}Hz (linear interpolation)",
             input_rate,
             output_rate
         );
 
         Ok(Self {
-            downsampler: Mutex::new(downsampler),
-            upsampler: Mutex::new(upsampler),
+            input_rate,
+            output_rate,
+            downsample_position: Mutex::new(0.0),
         })
     }
 
@@ -91,27 +44,35 @@ impl AudioResampler {
             return Ok(Vec::new());
         }
 
-        // Convert i16 to f32 for processing
-        let input_f32: Vec<f32> = input.iter().map(|&s| s as f32 / 32768.0).collect();
+        let ratio = self.input_rate as f64 / self.output_rate as f64;
+        let output_len = (input.len() as f64 / ratio).floor() as usize;
+        let mut output = Vec::with_capacity(output_len);
 
-        // Prepare input as 2D vector (channels x samples)
-        let input_frames = vec![input_f32];
+        let mut position = self.downsample_position.lock()
+            .map_err(|e| format!("Failed to lock position: {}", e))?;
 
-        // Process through resampler
-        let mut downsampler = self
-            .downsampler
-            .lock()
-            .map_err(|e| format!("Failed to lock downsampler: {}", e))?;
+        for _ in 0..output_len {
+            let src_idx = (*position).floor() as usize;
+            let frac = *position - (*position).floor();
 
-        let output_frames = downsampler
-            .process(&input_frames, None)
-            .map_err(|e| format!("Downsampling failed: {:?}", e))?;
+            if src_idx + 1 < input.len() {
+                // Linear interpolation
+                let sample1 = input[src_idx] as f64;
+                let sample2 = input[src_idx + 1] as f64;
+                let interpolated = sample1 + (sample2 - sample1) * frac;
+                output.push(interpolated.clamp(-32768.0, 32767.0) as i16);
+            } else if src_idx < input.len() {
+                output.push(input[src_idx]);
+            }
 
-        // Convert back to i16
-        let output: Vec<i16> = output_frames[0]
-            .iter()
-            .map(|&s| (s * 32768.0).clamp(-32768.0, 32767.0) as i16)
-            .collect();
+            *position += ratio;
+        }
+
+        // Keep fractional part for next chunk
+        *position -= input.len() as f64;
+        if *position < 0.0 {
+            *position = 0.0;
+        }
 
         tracing::debug!(
             "[Resample] Downsampled {} → {} samples",
@@ -135,27 +96,25 @@ impl AudioResampler {
             return Ok(Vec::new());
         }
 
-        // Convert i16 to f32 for processing
-        let input_f32: Vec<f32> = input.iter().map(|&s| s as f32 / 32768.0).collect();
+        let ratio = self.output_rate as f64 / self.input_rate as f64;
+        let output_len = (input.len() as f64 * ratio).floor() as usize;
+        let mut output = Vec::with_capacity(output_len);
 
-        // Prepare input as 2D vector (channels x samples)
-        let input_frames = vec![input_f32];
+        for i in 0..output_len {
+            let src_pos = i as f64 / ratio;
+            let src_idx = src_pos.floor() as usize;
+            let frac = src_pos - src_pos.floor();
 
-        // Process through resampler
-        let mut upsampler = self
-            .upsampler
-            .lock()
-            .map_err(|e| format!("Failed to lock upsampler: {}", e))?;
-
-        let output_frames = upsampler
-            .process(&input_frames, None)
-            .map_err(|e| format!("Upsampling failed: {:?}", e))?;
-
-        // Convert back to i16
-        let output: Vec<i16> = output_frames[0]
-            .iter()
-            .map(|&s| (s * 32768.0).clamp(-32768.0, 32767.0) as i16)
-            .collect();
+            if src_idx + 1 < input.len() {
+                // Linear interpolation
+                let sample1 = input[src_idx] as f64;
+                let sample2 = input[src_idx + 1] as f64;
+                let interpolated = sample1 + (sample2 - sample1) * frac;
+                output.push(interpolated.clamp(-32768.0, 32767.0) as i16);
+            } else if src_idx < input.len() {
+                output.push(input[src_idx]);
+            }
+        }
 
         tracing::debug!(
             "[Resample] Upsampled {} → {} samples",
@@ -164,79 +123,6 @@ impl AudioResampler {
         );
 
         Ok(output)
-    }
-}
-
-/// Simple resampler that uses basic interpolation (fallback if rubato fails)
-pub struct SimpleResampler {
-    input_rate: u32,
-    output_rate: u32,
-}
-
-impl SimpleResampler {
-    pub fn new(input_rate: u32, output_rate: u32) -> Self {
-        Self {
-            input_rate,
-            output_rate,
-        }
-    }
-
-    /// Downsample using linear interpolation
-    pub fn downsample(&self, input: &[i16]) -> Vec<i16> {
-        if input.is_empty() {
-            return Vec::new();
-        }
-
-        let ratio = self.input_rate as f64 / self.output_rate as f64;
-        let output_len = (input.len() as f64 / ratio) as usize;
-        let mut output = Vec::with_capacity(output_len);
-
-        for i in 0..output_len {
-            let src_pos = i as f64 * ratio;
-            let src_idx = src_pos as usize;
-            let frac = src_pos - src_idx as f64;
-
-            if src_idx + 1 < input.len() {
-                // Linear interpolation
-                let sample1 = input[src_idx] as f64;
-                let sample2 = input[src_idx + 1] as f64;
-                let interpolated = sample1 + (sample2 - sample1) * frac;
-                output.push(interpolated as i16);
-            } else if src_idx < input.len() {
-                output.push(input[src_idx]);
-            }
-        }
-
-        output
-    }
-
-    /// Upsample using linear interpolation
-    pub fn upsample(&self, input: &[i16]) -> Vec<i16> {
-        if input.is_empty() {
-            return Vec::new();
-        }
-
-        let ratio = self.output_rate as f64 / self.input_rate as f64;
-        let output_len = (input.len() as f64 * ratio) as usize;
-        let mut output = Vec::with_capacity(output_len);
-
-        for i in 0..output_len {
-            let src_pos = i as f64 / ratio;
-            let src_idx = src_pos as usize;
-            let frac = src_pos - src_idx as f64;
-
-            if src_idx + 1 < input.len() {
-                // Linear interpolation
-                let sample1 = input[src_idx] as f64;
-                let sample2 = input[src_idx + 1] as f64;
-                let interpolated = sample1 + (sample2 - sample1) * frac;
-                output.push(interpolated as i16);
-            } else if src_idx < input.len() {
-                output.push(input[src_idx]);
-            }
-        }
-
-        output
     }
 }
 
@@ -264,6 +150,21 @@ mod tests {
     }
 
     #[test]
+    fn test_downsample_variable_sizes() {
+        let resampler = AudioResampler::new(48000, 8000, 960).unwrap();
+        
+        // Test with 480 samples (10ms)
+        let input1: Vec<i16> = (0..480).map(|i| (i * 100) as i16).collect();
+        let output1 = resampler.downsample(&input1).unwrap();
+        assert!(output1.len() >= 75 && output1.len() <= 85);
+        
+        // Test with 240 samples (5ms)
+        let input2: Vec<i16> = (0..240).map(|i| (i * 100) as i16).collect();
+        let output2 = resampler.downsample(&input2).unwrap();
+        assert!(output2.len() >= 35 && output2.len() <= 45);
+    }
+
+    #[test]
     fn test_upsample() {
         let resampler = AudioResampler::new(48000, 8000, 960).unwrap();
         
@@ -274,19 +175,6 @@ mod tests {
         
         // Should produce ~960 samples at 48kHz (20ms)
         assert!(output.len() >= 900 && output.len() <= 1000);
-    }
-
-    #[test]
-    fn test_simple_resampler() {
-        let resampler = SimpleResampler::new(48000, 8000);
-        
-        // Create 960 samples at 48kHz
-        let input: Vec<i16> = (0..960).map(|i| (i * 100) as i16).collect();
-        
-        let output = resampler.downsample(&input);
-        
-        // Should produce 160 samples at 8kHz
-        assert_eq!(output.len(), 160);
     }
 
     #[test]
