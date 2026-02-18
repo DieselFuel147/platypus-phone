@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod sip;
+mod rtp;
+mod audio;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -187,6 +189,56 @@ async fn unregister() -> Result<String, String> {
     Ok("Unregistered successfully".to_string())
 }
 
+// List available audio input devices
+#[tauri::command]
+async fn list_audio_input_devices() -> Result<Vec<String>, String> {
+    let audio_manager = audio::AudioManager::new()?;
+    audio_manager.list_input_devices()
+}
+
+// List available audio output devices
+#[tauri::command]
+async fn list_audio_output_devices() -> Result<Vec<String>, String> {
+    let audio_manager = audio::AudioManager::new()?;
+    audio_manager.list_output_devices()
+}
+
+// Test microphone (returns true if mic is working)
+#[tauri::command]
+async fn test_microphone(device_name: Option<String>) -> Result<String, String> {
+    // Run in blocking task since Stream is not Send
+    tokio::task::spawn_blocking(move || {
+        let mut audio_manager = audio::AudioManager::new()?;
+        
+        if let Some(name) = device_name {
+            audio_manager.init_input_by_name(&name)?;
+        } else {
+            audio_manager.init_input()?;
+        }
+        
+        // Try to start capture briefly
+        let (stream, mut rx) = audio_manager.start_capture()?;
+        
+        // Wait for a few samples
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        
+        let mut sample_count = 0;
+        while let Ok(_samples) = rx.try_recv() {
+            sample_count += 1;
+        }
+        
+        drop(stream);
+        
+        if sample_count > 0 {
+            Ok(format!("Microphone working! Received {} audio buffers", sample_count))
+        } else {
+            Err("No audio data received from microphone".to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Mutex::new(SipState::default()))
@@ -196,7 +248,10 @@ fn main() {
             make_call,
             answer_call,
             hangup_call,
-            unregister
+            unregister,
+            list_audio_input_devices,
+            list_audio_output_devices,
+            test_microphone
         ])
         .on_window_event(|event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {

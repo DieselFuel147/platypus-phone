@@ -3,6 +3,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::net::UdpSocket;
 use md5::compute as md5_compute;
+use crate::rtp::{RtpSession, g711, parse_sdp};
+use crate::audio::AudioManager;
 
 // Dialog state for active calls
 #[derive(Clone, Debug)]
@@ -14,6 +16,11 @@ pub struct Dialog {
     remote_uri: String,
     local_uri: String,
     state: CallState,
+    // RTP session (Arc makes it cloneable)
+    rtp_session: Option<Arc<RtpSession>>,
+    // Task handles for cleanup (not cloned)
+    audio_tx_task: Option<Arc<tokio::task::JoinHandle<()>>>,
+    audio_rx_task: Option<Arc<tokio::task::JoinHandle<()>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -589,6 +596,125 @@ async fn send_with_auth(
     Err("No auth challenge received".to_string())
 }
 
+// Start RTP media session after call is established
+async fn start_rtp_media(response_sdp: &str, local_port: u16) -> Result<(Arc<RtpSession>, tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>), String> {
+    println!("[RTP] Starting RTP media session...");
+    
+    // Parse remote SDP
+    let (remote_ip, remote_port, payload_type) = parse_sdp(response_sdp)?;
+    
+    println!("[RTP] Remote endpoint: {}:{}", remote_ip, remote_port);
+    println!("[RTP] Payload type: {} ({})", payload_type, 
+        if payload_type == 0 { "PCMU" } else if payload_type == 8 { "PCMA" } else { "Unknown" });
+    
+    // Create remote address
+    let remote_addr: std::net::SocketAddr = format!("{}:{}", remote_ip, remote_port)
+        .parse()
+        .map_err(|e| format!("Invalid remote address: {}", e))?;
+    
+    // Create RTP session
+    let rtp_session = Arc::new(
+        RtpSession::new(local_port, remote_addr, payload_type).await?
+    );
+    
+    println!("[RTP] ✓ RTP session created");
+    
+    // Initialize audio manager
+    println!("[Audio] Initializing audio devices...");
+    let mut audio_manager = AudioManager::new()?;
+    audio_manager.init_input()?;
+    audio_manager.init_output()?;
+    
+    // Start audio capture
+    let (input_stream, mut audio_rx) = audio_manager.start_capture()?;
+    
+    // Start audio playback
+    let (output_stream, audio_tx) = audio_manager.start_playback()?;
+    
+    println!("[Audio] ✓ Audio devices initialized");
+    
+    // Keep streams alive by leaking them (they'll be cleaned up when tasks abort)
+    // This is necessary because Stream is not Send and cannot be moved into tokio::spawn
+    std::mem::forget(input_stream);
+    std::mem::forget(output_stream);
+    
+    // Spawn TX task: Microphone → Encode → RTP → Network
+    let rtp_tx = rtp_session.clone();
+    let tx_payload_type = payload_type; // Capture for move
+    let tx_task = tokio::spawn(async move {
+        println!("[Audio] TX task started (Mic → RTP)");
+        let mut packet_count = 0u64;
+        
+        while let Some(samples) = audio_rx.recv().await {
+            // Encode samples to G.711
+            let encoded: Vec<u8> = if tx_payload_type == 0 {
+                // PCMU (μ-law)
+                samples.iter().map(|&s| g711::encode_ulaw(s)).collect()
+            } else {
+                // PCMA (A-law)
+                samples.iter().map(|&s| g711::encode_alaw(s)).collect()
+            };
+            
+            // Send RTP packet
+            if let Err(e) = rtp_tx.send_audio(&encoded).await {
+                eprintln!("[RTP] TX error: {}", e);
+                break;
+            }
+            
+            packet_count += 1;
+            if packet_count % 50 == 0 {
+                println!("[RTP] Sent {} packets", packet_count);
+            }
+        }
+        
+        println!("[Audio] TX task ended");
+    });
+    
+    // Spawn RX task: Network → RTP → Decode → Speaker
+    let rtp_rx = rtp_session.clone();
+    let rx_payload_type = payload_type; // Capture for move
+    let rx_task = tokio::spawn(async move {
+        println!("[Audio] RX task started (RTP → Speaker)");
+        let mut packet_count = 0u64;
+        
+        loop {
+            match rtp_rx.receive_audio().await {
+                Ok(encoded) => {
+                    // Decode G.711 to PCM
+                    let decoded: Vec<i16> = if rx_payload_type == 0 {
+                        // PCMU (μ-law)
+                        encoded.iter().map(|&b| g711::decode_ulaw(b)).collect()
+                    } else {
+                        // PCMA (A-law)
+                        encoded.iter().map(|&b| g711::decode_alaw(b)).collect()
+                    };
+                    
+                    // Send to speaker
+                    if let Err(e) = audio_tx.send(decoded).await {
+                        eprintln!("[Audio] Playback error: {}", e);
+                        break;
+                    }
+                    
+                    packet_count += 1;
+                    if packet_count % 50 == 0 {
+                        println!("[RTP] Received {} packets", packet_count);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[RTP] RX error: {}", e);
+                    break;
+                }
+            }
+        }
+        
+        println!("[Audio] RX task ended");
+    });
+    
+    println!("[RTP] ✓✓✓ RTP media session active! ✓✓✓");
+    
+    Ok((rtp_session, tx_task, rx_task))
+}
+
 pub async fn make_call(number: &str) -> Result<(), String> {
     let mut engine = SIP_ENGINE.lock().await;
 
@@ -626,6 +752,9 @@ pub async fn make_call(number: &str) -> Result<(), String> {
         remote_uri: dest_uri.clone(),
         local_uri: from_uri.clone(),
         state: CallState::Calling,
+        rtp_session: None,
+        audio_tx_task: None,
+        audio_rx_task: None,
     };
     
     engine.active_dialog = Some(dialog);
@@ -752,7 +881,25 @@ pub async fn make_call(number: &str) -> Result<(), String> {
         send_ack(&socket, &dest_uri, &call_id, &from_tag, to_tag.as_deref(), &from_uri, &local_addr, server_addr).await?;
         
         println!("[SIP] ✓✓✓ Call established! ✓✓✓");
-        println!("[SIP] Note: RTP media stream not yet implemented");
+        
+        // Start RTP media session
+        match start_rtp_media(&first_response, rtp_port).await {
+            Ok((rtp_session, tx_task, rx_task)) => {
+                // Store RTP components in dialog
+                let mut engine = SIP_ENGINE.lock().await;
+                if let Some(ref mut dialog) = engine.active_dialog {
+                    dialog.rtp_session = Some(rtp_session);
+                    dialog.audio_tx_task = Some(Arc::new(tx_task));
+                    dialog.audio_rx_task = Some(Arc::new(rx_task));
+                }
+                println!("[SIP] ✓ RTP media active - call has audio!");
+            }
+            Err(e) => {
+                eprintln!("[RTP] Failed to start media: {}", e);
+                println!("[SIP] Call established but no audio (RTP failed)");
+            }
+        }
+        
         return Ok(());
     } else if first_response.contains("SIP/2.0 180") || first_response.contains("SIP/2.0 183") {
         println!("[SIP] 180/183 Ringing - waiting for answer...");
@@ -811,7 +958,24 @@ pub async fn make_call(number: &str) -> Result<(), String> {
                     send_ack(&socket, &dest_uri, &call_id, &from_tag, to_tag.as_deref(), &from_uri, &local_addr, server_addr).await?;
                     
                     println!("[SIP] ✓✓��� Call established! ✓✓✓");
-                    println!("[SIP] Note: RTP media stream not yet implemented");
+                    // Start RTP media session
+                    match start_rtp_media(&response_str, rtp_port).await {
+                        Ok((rtp_session, tx_task, rx_task)) => {
+                            // Store RTP components in dialog
+                            let mut engine = SIP_ENGINE.lock().await;
+                            if let Some(ref mut dialog) = engine.active_dialog {
+                                dialog.rtp_session = Some(rtp_session);
+                                dialog.audio_tx_task = Some(Arc::new(tx_task));
+                                dialog.audio_rx_task = Some(Arc::new(rx_task));
+                            }
+                            println!("[SIP] ✓ RTP media active - call has audio!");
+                        }
+                        Err(e) => {
+                            eprintln!("[RTP] Failed to start media: {}", e);
+                            println!("[SIP] Call established but no audio (RTP failed)");
+                        }
+                    }
+                    
                     return Ok(());
                 } else if response_str.contains("SIP/2.0 4") || response_str.contains("SIP/2.0 5") || response_str.contains("SIP/2.0 6") {
                     let status_line = response_str.lines().next().unwrap_or("Unknown error");
@@ -941,6 +1105,17 @@ pub async fn hangup_call() -> Result<(), String> {
 
     println!("[SIP] Hanging up call");
     println!("[SIP] Call-ID: {}", dialog.call_id);
+
+    // Abort audio tasks if they exist
+    if let Some(tx_task) = dialog.audio_tx_task {
+        tx_task.abort();
+        println!("[Audio] TX task aborted");
+    }
+    if let Some(rx_task) = dialog.audio_rx_task {
+        rx_task.abort();
+        println!("[Audio] RX task aborted");
+    }
+    // Streams will be dropped automatically when dialog is cleared
 
     // Build BYE request
     let branch = format!("z9hG4bK{}", uuid::Uuid::new_v4().simple());
