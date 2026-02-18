@@ -156,6 +156,7 @@ impl AudioManager {
             .default_input_config()
             .map_err(|e| format!("Failed to get input config: {}", e))?;
 
+        tracing::info!("[Audio] Default input config: {:?}", supported_config);
         println!("[Audio] Default input config: {:?}", supported_config);
 
         // Try to use device's default config, but prefer mono if available
@@ -165,6 +166,7 @@ impl AudioManager {
             buffer_size: cpal::BufferSize::Default,
         };
 
+        tracing::info!("[Audio] Using input config: channels={}, sample_rate={}", config.channels, config.sample_rate.0);
         println!("[Audio] Using input config: {:?}", config);
 
         let (tx, rx) = mpsc::channel(100);

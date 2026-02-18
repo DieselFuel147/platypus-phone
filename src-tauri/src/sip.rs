@@ -629,14 +629,50 @@ println!("[RTP] ✓ RTP session created");
 tracing::info!("[Audio] Initializing audio devices...");
 println!("[Audio] Initializing audio devices...");
 let mut audio_manager = AudioManager::new()?;
-audio_manager.init_input()?;
-audio_manager.init_output()?;
+
+tracing::info!("[Audio] Calling init_input()...");
+match audio_manager.init_input() {
+Ok(_) => tracing::info!("[Audio] ✓ Input device initialized"),
+Err(e) => {
+tracing::error!("[Audio] ✗ Failed to init input: {}", e);
+return Err(e);
+}
+}
+
+tracing::info!("[Audio] Calling init_output()...");
+match audio_manager.init_output() {
+Ok(_) => tracing::info!("[Audio] ✓ Output device initialized"),
+Err(e) => {
+tracing::error!("[Audio] ✗ Failed to init output: {}", e);
+return Err(e);
+}
+}
 
 // Start audio capture
-let (input_stream, mut audio_rx) = audio_manager.start_capture()?;
+tracing::info!("[Audio] Starting audio capture...");
+let (input_stream, mut audio_rx) = match audio_manager.start_capture() {
+Ok(result) => {
+tracing::info!("[Audio] ✓ Audio capture started");
+result
+}
+Err(e) => {
+tracing::error!("[Audio] ✗ Failed to start capture: {}", e);
+return Err(e);
+}
+};
 
 // Start audio playback
-let (output_stream, audio_tx) = audio_manager.start_playback()?;
+tracing::info!("[Audio] Starting audio playback...");
+let (output_stream, audio_tx) = match audio_manager.start_playback() {
+Ok(result) => {
+tracing::info!("[Audio] ✓ Audio playback started");
+result
+}
+Err(e) => {
+tracing::error!("[Audio] ✗ Failed to start playback: {}", e);
+return Err(e);
+}
+};
 
 tracing::info!("[Audio] ✓ Audio devices initialized");
 println!("[Audio] ✓ Audio devices initialized");
