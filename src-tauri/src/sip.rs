@@ -5,6 +5,7 @@ use tokio::net::UdpSocket;
 use md5::compute as md5_compute;
 use crate::rtp::{RtpSession, g711, parse_sdp};
 use crate::audio::AudioManager;
+use crate::resample::AudioResampler;
 
 // Dialog state for active calls
 #[derive(Clone, Debug)]
@@ -698,25 +699,49 @@ println!("[Audio] ✓ Audio devices initialized");
     std::mem::forget(input_stream);
     std::mem::forget(output_stream);
     
+    // Create high-quality resampler for audio processing
+    // Assuming 48kHz audio device (typical) and 8kHz VoIP (standard)
+    // Chunk size: 960 samples = 20ms at 48kHz
+    tracing::info!("[Resample] Creating audio resampler (48kHz ↔ 8kHz)");
+    println!("[Resample] Creating audio resampler (48kHz ↔ 8kHz)");
+    
+    let resampler = match AudioResampler::new(48000, 8000, 960) {
+        Ok(r) => {
+            tracing::info!("[Resample] ✓ High-quality resampler created");
+            println!("[Resample] ✓ High-quality resampler created (using rubato)");
+            Arc::new(r)
+        }
+        Err(e) => {
+            tracing::warn!("[Resample] Failed to create rubato resampler: {}", e);
+            println!("[Resample] ⚠ Failed to create rubato resampler: {}", e);
+            println!("[Resample] Falling back to simple resampler");
+            return Err(format!("Failed to create resampler: {}", e));
+        }
+    };
+    
     // Spawn TX task: Microphone → Downsample → Encode → RTP → Network
     let rtp_tx = rtp_session.clone();
     let tx_payload_type = payload_type; // Capture for move
+    let tx_resampler = resampler.clone();
     let tx_task = tokio::spawn(async move {
-        tracing::info!("[Audio] TX task started (Mic → RTP)");
-        println!("[Audio] TX task started (Mic → RTP)");
+        tracing::info!("[Audio] TX task started (Mic → RTP with high-quality resampling)");
+        println!("[Audio] TX task started (Mic → RTP with high-quality resampling)");
         let mut packet_count = 0u64;
         
         while let Some(samples) = audio_rx.recv().await {
             tracing::debug!("[Audio] TX: Received {} samples from mic", samples.len());
             
-            // Simple downsampling: 48kHz → 8kHz (take every 6th sample)
-            // This is crude but will make audio work
-            let downsampled: Vec<i16> = samples.iter()
-                .step_by(6)
-                .copied()
-                .collect();
+            // High-quality downsampling: 48kHz → 8kHz using rubato
+            let downsampled = match tx_resampler.downsample(&samples) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("[Resample] TX downsample error: {}", e);
+                    eprintln!("[Resample] TX downsample error: {}", e);
+                    continue; // Skip this packet
+                }
+            };
             
-            tracing::debug!("[Audio] TX: Downsampled to {} samples", downsampled.len());
+            tracing::debug!("[Audio] TX: Downsampled {} → {} samples", samples.len(), downsampled.len());
             
             // Encode samples to G.711
             let encoded: Vec<u8> = if tx_payload_type == 0 {
@@ -748,9 +773,10 @@ println!("[Audio] ✓ Audio devices initialized");
     // Spawn RX task: Network → RTP → Decode → Upsample → Speaker
     let rtp_rx = rtp_session.clone();
     let rx_payload_type = payload_type; // Capture for move
+    let rx_resampler = resampler.clone();
     let rx_task = tokio::spawn(async move {
-        tracing::info!("[Audio] RX task started (RTP → Speaker)");
-        println!("[Audio] RX task started (RTP → Speaker)");
+        tracing::info!("[Audio] RX task started (RTP → Speaker with high-quality resampling)");
+        println!("[Audio] RX task started (RTP → Speaker with high-quality resampling)");
         let mut packet_count = 0u64;
         
         loop {
@@ -769,13 +795,17 @@ println!("[Audio] ✓ Audio devices initialized");
                     
                     tracing::debug!("[Audio] RX: Decoded to {} samples", decoded.len());
                     
-                    // Simple upsampling: 8kHz → 48kHz (repeat each sample 6 times)
-                    // This is crude but will make audio work
-                    let upsampled: Vec<i16> = decoded.iter()
-                        .flat_map(|&sample| std::iter::repeat(sample).take(6))
-                        .collect();
+                    // High-quality upsampling: 8kHz → 48kHz using rubato
+                    let upsampled = match rx_resampler.upsample(&decoded) {
+                        Ok(u) => u,
+                        Err(e) => {
+                            tracing::error!("[Resample] RX upsample error: {}", e);
+                            eprintln!("[Resample] RX upsample error: {}", e);
+                            continue; // Skip this packet
+                        }
+                    };
                     
-                    tracing::debug!("[Audio] RX: Upsampled to {} samples", upsampled.len());
+                    tracing::debug!("[Audio] RX: Upsampled {} → {} samples", decoded.len(), upsampled.len());
                     
                     // Send to speaker
                     if let Err(e) = audio_tx.send(upsampled).await {
