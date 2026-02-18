@@ -22,7 +22,9 @@
       "active": true,
       "targets": "all",
       "identifier": "com.platypus.phone",
-      "icon": []
+      "icon": [
+        "icons/icon.ico"
+      ]
     },
     "security": {
       "csp": null
