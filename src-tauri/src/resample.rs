@@ -1,5 +1,5 @@
 use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+    Resampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use std::sync::Mutex;
 
@@ -7,9 +7,9 @@ use std::sync::Mutex;
 /// Handles conversion between 48kHz (typical audio device) and 8kHz (VoIP standard)
 pub struct AudioResampler {
     /// Resampler for downsampling (48kHz → 8kHz) for TX
-    downsampler: Mutex<SincFixedIn<f32>>,
+    downsampler: Mutex<SincFixedOut<f32>>,
     /// Resampler for upsampling (8kHz → 48kHz) for RX
-    upsampler: Mutex<SincFixedIn<f32>>,
+    upsampler: Mutex<SincFixedOut<f32>>,
 }
 
 impl AudioResampler {
@@ -29,12 +29,16 @@ impl AudioResampler {
             window: WindowFunction::BlackmanHarris2,
         };
 
-        // Create downsampler (48kHz → 8kHz)
-        let downsampler = SincFixedIn::<f32>::new(
+        // Calculate output chunk size for downsampler (48kHz → 8kHz)
+        // For 480 input samples at 48kHz, we get 80 output samples at 8kHz
+        let downsample_output_size = (chunk_size as f64 * output_rate as f64 / input_rate as f64).ceil() as usize;
+        
+        // Create downsampler (48kHz → 8kHz) with fixed output size
+        let downsampler = SincFixedOut::<f32>::new(
             output_rate as f64 / input_rate as f64,
             2.0, // max_resample_ratio_relative
             downsample_params,
-            chunk_size,
+            downsample_output_size,
             1, // mono channel
         )
         .map_err(|e| format!("Failed to create downsampler: {:?}", e))?;
@@ -48,23 +52,24 @@ impl AudioResampler {
             window: WindowFunction::BlackmanHarris2,
         };
 
-        // Create upsampler (8kHz → 48kHz)
-        // For upsampling, chunk_size should be for the input (8kHz)
-        let upsample_chunk_size = (chunk_size as f64 * output_rate as f64 / input_rate as f64) as usize;
-        let upsampler = SincFixedIn::<f32>::new(
+        // Calculate output chunk size for upsampler (8kHz → 48kHz)
+        // For 160 input samples at 8kHz, we get 960 output samples at 48kHz
+        let upsample_output_size = (160 * 6); // 160 samples * 6 = 960 samples
+        
+        // Create upsampler (8kHz → 48kHz) with fixed output size
+        let upsampler = SincFixedOut::<f32>::new(
             input_rate as f64 / output_rate as f64,
             2.0, // max_resample_ratio_relative
             upsample_params,
-            upsample_chunk_size,
+            upsample_output_size,
             1, // mono channel
         )
         .map_err(|e| format!("Failed to create upsampler: {:?}", e))?;
 
         tracing::info!(
-            "[Resample] Created resampler: {}Hz ↔ {}Hz, chunk_size={}",
+            "[Resample] Created resampler: {}Hz ↔ {}Hz (accepts variable input sizes)",
             input_rate,
-            output_rate,
-            chunk_size
+            output_rate
         );
 
         Ok(Self {
