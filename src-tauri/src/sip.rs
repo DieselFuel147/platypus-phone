@@ -854,7 +854,21 @@ pub async fn make_call(number: &str) -> Result<(), String> {
 
     // Generate SDP (Session Description Protocol)
     let local_ip = local_addr.split(':').next().unwrap_or("127.0.0.1");
-    let rtp_port = 10000; // TODO: Allocate actual RTP port
+    
+    // Allocate RTP port dynamically by binding to port 0 and getting the assigned port
+    let rtp_port = {
+        let temp_socket = std::net::UdpSocket::bind("0.0.0.0:0")
+            .map_err(|e| format!("Failed to allocate RTP port: {}", e))?;
+        let port = temp_socket.local_addr()
+            .map_err(|e| format!("Failed to get RTP port: {}", e))?
+            .port();
+        drop(temp_socket); // Release the socket so RtpSession can bind to it
+        port
+    };
+    
+    tracing::info!("[SIP] Allocated RTP port: {}", rtp_port);
+    println!("[SIP] Allocated RTP port: {}", rtp_port);
+    
     let session_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
