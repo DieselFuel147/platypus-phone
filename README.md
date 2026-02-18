@@ -84,13 +84,14 @@ npm run tauri dev
 - ✅ Clean shutdown handling
 - ✅ Persistent credential storage with password obfuscation
 - ✅ Automatic credential loading on app startup
+- ✅ INVITE request (outbound calls)
+- ✅ ACK response
+- ✅ BYE request (call termination)
+- ✅ RTP/SRTP media streams
+- ✅ Audio device management
 
 **What's in progress:**
-- ⚠️ INVITE request (outbound calls)
-- ⚠️ ACK response
-- ⚠️ BYE request (call termination)
-- ⚠️ RTP/SRTP media streams
-- ⚠️ Audio device management
+
 - ⚠️ Incoming call handling
 
 ### Next Steps
