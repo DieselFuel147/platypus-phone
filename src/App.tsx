@@ -120,7 +120,19 @@ function App() {
       });
       setTestResult(result);
     } catch (error) {
-      setTestResult(`Test failed: ${error}`);
+      setTestResult(`Microphone test failed: ${error}`);
+    }
+  };
+
+  const handleTestSpeaker = async () => {
+    setTestResult("Testing speaker... (you should hear a tone)");
+    try {
+      const result = await invoke<string>("test_speaker", {
+        deviceName: selectedOutput || null,
+      });
+      setTestResult(result);
+    } catch (error) {
+      setTestResult(`Speaker test failed: ${error}`);
     }
   };
 
@@ -170,13 +182,16 @@ function App() {
               <select 
                 value={selectedOutput} 
                 onChange={(e) => setSelectedOutput(e.target.value)}
-                style={{ width: "100%", padding: "0.5em" }}
+                style={{ width: "100%", padding: "0.5em", marginBottom: "0.5em" }}
               >
                 {outputDevices.length === 0 && <option>No devices found</option>}
                 {outputDevices.map((device) => (
                   <option key={device} value={device}>{device}</option>
                 ))}
               </select>
+              <button onClick={handleTestSpeaker} style={{ width: "100%" }}>
+                🔊 Test Speaker
+              </button>
             </div>
 
             {testResult && (

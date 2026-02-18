@@ -152,30 +152,44 @@ impl AudioManager {
             .ok_or("Input device not initialized")?;
 
         // Get supported config
-        let config = device
+        let supported_config = device
             .default_input_config()
             .map_err(|e| format!("Failed to get input config: {}", e))?;
 
-        println!("[Audio] Input config: {:?}", config);
+        println!("[Audio] Default input config: {:?}", supported_config);
 
-        // We need 8kHz mono for G.711
-        let desired_config = StreamConfig {
-            channels: 1,
-            sample_rate: cpal::SampleRate(8000),
-            buffer_size: cpal::BufferSize::Fixed(160), // 20ms at 8kHz
+        // Try to use device's default config, but prefer mono if available
+        let config = StreamConfig {
+            channels: supported_config.channels().min(2), // Use mono if available, stereo otherwise
+            sample_rate: supported_config.sample_rate(),
+            buffer_size: cpal::BufferSize::Default,
         };
 
+        println!("[Audio] Using input config: {:?}", config);
+
         let (tx, rx) = mpsc::channel(100);
+        let channels = config.channels;
 
         let err_fn = |err| eprintln!("[Audio] Input stream error: {}", err);
 
         // Build input stream
         let stream = device
             .build_input_stream(
-                &desired_config,
+                &config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    // Send audio data through channel
-                    let samples = data.to_vec();
+                    // Convert to mono if stereo
+                    let samples = if channels == 2 {
+                        // Average left and right channels
+                        data.chunks(2)
+                            .map(|chunk| {
+                                let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
+                                (sum / chunk.len() as i32) as i16
+                            })
+                            .collect()
+                    } else {
+                        data.to_vec()
+                    };
+                    
                     if let Err(e) = tx.blocking_send(samples) {
                         eprintln!("[Audio] Failed to send audio data: {}", e);
                     }
@@ -200,34 +214,45 @@ impl AudioManager {
             .ok_or("Output device not initialized")?;
 
         // Get supported config
-        let config = device
+        let supported_config = device
             .default_output_config()
             .map_err(|e| format!("Failed to get output config: {}", e))?;
 
-        println!("[Audio] Output config: {:?}", config);
+        println!("[Audio] Default output config: {:?}", supported_config);
 
-        // We need 8kHz mono for G.711
-        let desired_config = StreamConfig {
-            channels: 1,
-            sample_rate: cpal::SampleRate(8000),
-            buffer_size: cpal::BufferSize::Fixed(160), // 20ms at 8kHz
+        // Use device's default config
+        let config = StreamConfig {
+            channels: supported_config.channels().min(2), // Use mono if available, stereo otherwise
+            sample_rate: supported_config.sample_rate(),
+            buffer_size: cpal::BufferSize::Default,
         };
+
+        println!("[Audio] Using output config: {:?}", config);
 
         let (tx, mut rx) = mpsc::channel::<Vec<i16>>(100);
         let buffer = Arc::new(std::sync::Mutex::new(Vec::<i16>::new()));
         let buffer_clone = buffer.clone();
+        let channels = config.channels;
 
         let err_fn = |err| eprintln!("[Audio] Output stream error: {}", err);
 
         // Build output stream
         let stream = device
             .build_output_stream(
-                &desired_config,
+                &config,
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
                     // Try to receive new audio data
                     while let Ok(samples) = rx.try_recv() {
                         let mut buf = buffer_clone.lock().unwrap();
-                        buf.extend_from_slice(&samples);
+                        // Duplicate mono to stereo if needed
+                        if channels == 2 {
+                            for sample in samples {
+                                buf.push(sample);
+                                buf.push(sample); // Duplicate for right channel
+                            }
+                        } else {
+                            buf.extend_from_slice(&samples);
+                        }
                     }
 
                     // Fill output buffer
@@ -257,6 +282,60 @@ impl AudioManager {
         println!("[Audio] ✓ Speaker playback started");
 
         Ok((stream, tx))
+    }
+
+    /// Test speaker by playing a tone
+    pub fn test_speaker(&self, frequency: f32, duration_ms: u64) -> Result<String, String> {
+        let device = self.output_device
+            .as_ref()
+            .ok_or("Output device not initialized")?;
+
+        // Get supported config
+        let supported_config = device
+            .default_output_config()
+            .map_err(|e| format!("Failed to get output config: {}", e))?;
+
+        let config = StreamConfig {
+            channels: supported_config.channels().min(2),
+            sample_rate: supported_config.sample_rate(),
+            buffer_size: cpal::BufferSize::Default,
+        };
+
+        let sample_rate = config.sample_rate.0 as f32;
+        let channels = config.channels as usize;
+        
+        // Generate sine wave
+        let mut sample_clock = 0f32;
+        let err_fn = |err| eprintln!("[Audio] Output stream error: {}", err);
+
+        let stream = device
+            .build_output_stream(
+                &config,
+                move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    for frame in data.chunks_mut(channels) {
+                        let value = (sample_clock * frequency * 2.0 * std::f32::consts::PI / sample_rate).sin();
+                        let sample = (value * i16::MAX as f32 * 0.5) as i16; // 50% volume
+                        
+                        for sample_out in frame.iter_mut() {
+                            *sample_out = sample;
+                        }
+                        
+                        sample_clock = (sample_clock + 1.0) % sample_rate;
+                    }
+                },
+                err_fn,
+                None,
+            )
+            .map_err(|e| format!("Failed to build output stream: {}", e))?;
+
+        stream.play().map_err(|e| format!("Failed to start output stream: {}", e))?;
+
+        // Play for specified duration
+        std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+
+        drop(stream);
+
+        Ok(format!("Speaker test complete! Played {}Hz tone for {}ms", frequency, duration_ms))
     }
 }
 

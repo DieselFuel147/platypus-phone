@@ -230,10 +230,30 @@ async fn test_microphone(device_name: Option<String>) -> Result<String, String> 
         drop(stream);
         
         if sample_count > 0 {
-            Ok(format!("Microphone working! Received {} audio buffers", sample_count))
+            Ok(format!("✓ Microphone working! Received {} audio buffers", sample_count))
         } else {
             Err("No audio data received from microphone".to_string())
         }
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+// Test speaker by playing a tone
+#[tauri::command]
+async fn test_speaker(device_name: Option<String>) -> Result<String, String> {
+    // Run in blocking task since Stream is not Send
+    tokio::task::spawn_blocking(move || {
+        let mut audio_manager = audio::AudioManager::new()?;
+        
+        if let Some(name) = device_name {
+            audio_manager.init_output_by_name(&name)?;
+        } else {
+            audio_manager.init_output()?;
+        }
+        
+        // Play a 440Hz tone (A4 note) for 1 second
+        audio_manager.test_speaker(440.0, 1000)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -251,7 +271,8 @@ fn main() {
             unregister,
             list_audio_input_devices,
             list_audio_output_devices,
-            test_microphone
+            test_microphone,
+            test_speaker
         ])
         .on_window_event(|event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
