@@ -144,25 +144,48 @@ Contact: <sip:user@local_ip:port>;expires=120
    - Proper resource cleanup
    - Zero compiler warnings
 
-### 🚧 In Progress
-
-4. **INVITE (Outbound Calls)**
+6. **INVITE (Outbound Calls)** ✅ **WORKING**
    - Build INVITE request with SDP
+   - Send initial INVITE without auth
    - Handle provisional responses (100 Trying, 180 Ringing, 183 Progress)
-   - Handle 200 OK and send ACK
-   - Dialog state management
+   - Properly skip provisional responses and wait for final response
+   - Handle 401/407 authentication challenges
+   - Send authenticated INVITE with proper Digest auth
+   - Handle qop=auth with nc and cnonce
+   - Receive 200 OK response
+   - Send ACK with correct CSeq matching INVITE
+   - Dialog state management (Call-ID, tags, CSeq)
+   - **Status**: Call signaling fully functional, calls connect successfully
 
-5. **BYE (Call Termination)**
-   - Send BYE request
+7. **BYE (Call Termination)** ✅ **WORKING**
+   - Send BYE request with proper dialog parameters
    - Handle 200 OK response
    - Clean up dialog state
+   - Proper CSeq incrementing
+   - **Status**: Clean call termination working
 
-6. **RTP Media**
-   - SDP generation and parsing
-   - RTP socket creation
-   - Audio codec negotiation (G.711, Opus)
-   - Audio device enumeration
-   - Audio capture and playback
+8. **Authentication (Digest)** ✅ **WORKING**
+   - RFC 2617 compliant Digest authentication
+   - Support for qop=auth with nc and cnonce
+   - Support for simple digest (no qop)
+   - Proper URI matching in digest calculation
+   - CSeq incrementing on auth retry
+   - Branch parameter changes on retry
+   - Works for REGISTER, INVITE, and other methods
+   - **Status**: Fully functional for all tested scenarios
+
+### 🚧 In Progress
+
+9. **RTP Media** ⚠️ **NOT IMPLEMENTED**
+   - SDP generation ✅ (basic implementation done)
+   - SDP parsing ❌ (not implemented)
+   - RTP socket creation ❌ (not implemented)
+   - Audio codec negotiation ❌ (G.711 advertised but not implemented)
+   - Audio device enumeration ❌ (not implemented)
+   - Audio capture ❌ (not implemented)
+   - Audio playback ❌ (not implemented)
+   - RTP packet sending/receiving ❌ (not implemented)
+   - **Status**: Calls connect but no audio - this is the next major task
 
 ### 📋 Planned
 
@@ -339,14 +362,57 @@ SIP/2.0 200 OK
 
 ## Next Steps
 
-1. Implement INVITE request with SDP
-2. Add RTP socket creation
-3. Implement ACK response
-4. Add BYE request
-5. Implement audio device handling
-6. Add incoming call support (listen for INVITE)
-7. Implement call hold/resume
-8. Add periodic re-REGISTER
+### Immediate Priority: RTP Media Implementation
+
+1. **RTP Socket Creation**
+   - Create UDP socket for RTP on advertised port (currently 10000)
+   - Parse remote SDP to get remote RTP address and port
+   - Bind local RTP socket
+
+2. **Audio Codec Implementation (G.711)**
+   - Implement PCMU (G.711 μ-law) encoder/decoder
+   - Implement PCMA (G.711 A-law) encoder/decoder
+   - 8kHz sample rate, 8-bit samples
+
+3. **Audio Device Integration**
+   - Enumerate audio input/output devices
+   - Open microphone for capture
+   - Open speaker for playback
+   - Handle audio device errors
+
+4. **RTP Packet Handling**
+   - Build RTP packets (RFC 3550)
+   - Send RTP packets with encoded audio
+   - Receive RTP packets
+   - Decode and play received audio
+   - Handle sequence numbers and timestamps
+
+5. **Audio Pipeline**
+   - Capture audio from microphone → Encode → RTP ��� Network
+   - Network → RTP → Decode → Play to speaker
+   - Buffer management for smooth playback
+
+### Future Enhancements
+
+6. **Incoming Calls**
+   - Listen for INVITE requests
+   - Send 180 Ringing
+   - Send 200 OK with SDP
+   - Handle ACK
+
+7. **Call Hold/Resume**
+   - Re-INVITE with modified SDP
+   - Media stream pause/resume
+
+8. **Keep-Alive**
+   - Periodic re-REGISTER (before expiry)
+   - OPTIONS ping for NAT keep-alive
+
+9. **Advanced Features**
+   - DTMF support (RFC 2833)
+   - Call transfer (REFER)
+   - Multiple simultaneous calls
+   - Conference calling
 
 ---
 
@@ -361,11 +427,40 @@ SIP/2.0 200 OK
 
 ### Key Functions
 
-- `init_pjsip()` - Initialize UDP socket
-- `register_account()` - Complete registration with auth
-- `make_call()` - Initiate outbound call (TODO)
-- `answer_call()` - Answer incoming call (TODO)
-- `hangup_call()` - Terminate call (TODO)
+- `init_pjsip()` - Initialize UDP socket ✅
+- `register_account()` - Complete registration with auth ✅
+- `make_call()` - Initiate outbound call ✅ **WORKING**
+- `send_with_auth()` - Generic auth handler with provisional response support ✅
+- `send_ack()` - Send ACK for 200 OK ✅
+- `hangup_call()` - Terminate call ✅ **WORKING**
+- `unregister()` - De-register from server ✅
+- `answer_call()` - Answer incoming call ❌ (not implemented)
+- `parse_auth_header()` - Parse WWW-Authenticate header ✅
+- `calculate_digest_response()` - Calculate MD5 digest with qop support ✅
+- `extract_to_tag()` - Extract To tag from responses ✅
+
+### Important Implementation Details
+
+**Provisional Response Handling**: The `send_with_auth()` function properly handles SIP's provisional vs final response model:
+- Skips 1xx provisional responses (100 Trying, 180 Ringing, 183 Progress)
+- Waits for final responses (2xx, 4xx, 5xx, 6xx)
+- Handles auth challenges (401/407) that come after provisional responses
+- This is critical for INVITE transactions where multiple provisional responses are common
+
+**Digest Authentication**: Full RFC 2617 compliance:
+- Supports both simple digest (no qop) and qop=auth
+- Properly calculates nc (nonce count) and cnonce (client nonce)
+- URI in digest matches the request URI exactly
+- CSeq increments on auth retry
+- Branch parameter changes on retry
+- Call-ID and From tag remain consistent
+
+**Dialog Management**: Proper RFC 3261 dialog state:
+- Call-ID uniquely identifies the dialog
+- From tag generated once and stays consistent
+- To tag extracted from 200 OK response
+- CSeq tracks request sequence within dialog
+- State machine: IDLE → CALLING → RINGING → CONFIRMED → TERMINATED
 
 ---
 
