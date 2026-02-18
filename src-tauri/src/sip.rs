@@ -682,48 +682,66 @@ println!("[Audio] ✓ Audio devices initialized");
     std::mem::forget(input_stream);
     std::mem::forget(output_stream);
     
-    // Spawn TX task: Microphone → Encode → RTP → Network
+    // Spawn TX task: Microphone → Downsample → Encode → RTP → Network
     let rtp_tx = rtp_session.clone();
     let tx_payload_type = payload_type; // Capture for move
     let tx_task = tokio::spawn(async move {
+        tracing::info!("[Audio] TX task started (Mic → RTP)");
         println!("[Audio] TX task started (Mic → RTP)");
         let mut packet_count = 0u64;
         
         while let Some(samples) = audio_rx.recv().await {
+            tracing::debug!("[Audio] TX: Received {} samples from mic", samples.len());
+            
+            // Simple downsampling: 48kHz → 8kHz (take every 6th sample)
+            // This is crude but will make audio work
+            let downsampled: Vec<i16> = samples.iter()
+                .step_by(6)
+                .copied()
+                .collect();
+            
+            tracing::debug!("[Audio] TX: Downsampled to {} samples", downsampled.len());
+            
             // Encode samples to G.711
             let encoded: Vec<u8> = if tx_payload_type == 0 {
                 // PCMU (μ-law)
-                samples.iter().map(|&s| g711::encode_ulaw(s)).collect()
+                downsampled.iter().map(|&s| g711::encode_ulaw(s)).collect()
             } else {
                 // PCMA (A-law)
-                samples.iter().map(|&s| g711::encode_alaw(s)).collect()
+                downsampled.iter().map(|&s| g711::encode_alaw(s)).collect()
             };
             
             // Send RTP packet
             if let Err(e) = rtp_tx.send_audio(&encoded).await {
+                tracing::error!("[RTP] TX error: {}", e);
                 eprintln!("[RTP] TX error: {}", e);
                 break;
             }
             
             packet_count += 1;
             if packet_count % 50 == 0 {
+                tracing::info!("[RTP] Sent {} packets", packet_count);
                 println!("[RTP] Sent {} packets", packet_count);
             }
         }
         
+        tracing::info!("[Audio] TX task ended");
         println!("[Audio] TX task ended");
     });
     
-    // Spawn RX task: Network → RTP → Decode → Speaker
+    // Spawn RX task: Network → RTP → Decode → Upsample → Speaker
     let rtp_rx = rtp_session.clone();
     let rx_payload_type = payload_type; // Capture for move
     let rx_task = tokio::spawn(async move {
+        tracing::info!("[Audio] RX task started (RTP → Speaker)");
         println!("[Audio] RX task started (RTP → Speaker)");
         let mut packet_count = 0u64;
         
         loop {
             match rtp_rx.receive_audio().await {
                 Ok(encoded) => {
+                    tracing::debug!("[Audio] RX: Received {} encoded bytes", encoded.len());
+                    
                     // Decode G.711 to PCM
                     let decoded: Vec<i16> = if rx_payload_type == 0 {
                         // PCMU (μ-law)
@@ -733,24 +751,38 @@ println!("[Audio] ✓ Audio devices initialized");
                         encoded.iter().map(|&b| g711::decode_alaw(b)).collect()
                     };
                     
+                    tracing::debug!("[Audio] RX: Decoded to {} samples", decoded.len());
+                    
+                    // Simple upsampling: 8kHz → 48kHz (repeat each sample 6 times)
+                    // This is crude but will make audio work
+                    let upsampled: Vec<i16> = decoded.iter()
+                        .flat_map(|&sample| std::iter::repeat(sample).take(6))
+                        .collect();
+                    
+                    tracing::debug!("[Audio] RX: Upsampled to {} samples", upsampled.len());
+                    
                     // Send to speaker
-                    if let Err(e) = audio_tx.send(decoded).await {
+                    if let Err(e) = audio_tx.send(upsampled).await {
+                        tracing::error!("[Audio] Playback error: {}", e);
                         eprintln!("[Audio] Playback error: {}", e);
                         break;
                     }
                     
                     packet_count += 1;
                     if packet_count % 50 == 0 {
+                        tracing::info!("[RTP] Received {} packets", packet_count);
                         println!("[RTP] Received {} packets", packet_count);
                     }
                 }
                 Err(e) => {
+                    tracing::error!("[RTP] RX error: {}", e);
                     eprintln!("[RTP] RX error: {}", e);
                     break;
                 }
             }
         }
         
+        tracing::info!("[Audio] RX task ended");
         println!("[Audio] RX task ended");
     });
     
