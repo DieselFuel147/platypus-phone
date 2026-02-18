@@ -628,15 +628,31 @@ println!("[RTP] ✓ RTP session created");
 // Initialize audio manager
 tracing::info!("[Audio] Initializing audio devices...");
 println!("[Audio] Initializing audio devices...");
-let mut audio_manager = AudioManager::new()?;
+
+let mut audio_manager = match AudioManager::new() {
+    Ok(mgr) => {
+        tracing::info!("[Audio] ✓ AudioManager created");
+        mgr
+    }
+    Err(e) => {
+        tracing::error!("[Audio] ✗ Failed to create AudioManager: {}", e);
+        println!("[Audio] ✗ Failed to create AudioManager: {}", e);
+        return Err(e);
+    }
+};
 
 tracing::info!("[Audio] Calling init_input()...");
+println!("[Audio] Calling init_input()...");
 match audio_manager.init_input() {
-Ok(_) => tracing::info!("[Audio] ✓ Input device initialized"),
-Err(e) => {
-tracing::error!("[Audio] ✗ Failed to init input: {}", e);
-return Err(e);
-}
+    Ok(_) => {
+        tracing::info!("[Audio] ✓ Input device initialized");
+        println!("[Audio] ✓ Input device initialized");
+    }
+    Err(e) => {
+        tracing::error!("[Audio] ✗ Failed to init input: {}", e);
+        println!("[Audio] ✗ Failed to init input: {}", e);
+        return Err(e);
+    }
 }
 
 tracing::info!("[Audio] Calling init_output()...");
