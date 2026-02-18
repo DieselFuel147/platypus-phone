@@ -598,40 +598,48 @@ async fn send_with_auth(
 
 // Start RTP media session after call is established
 async fn start_rtp_media(response_sdp: &str, local_port: u16) -> Result<(Arc<RtpSession>, tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>), String> {
-    println!("[RTP] Starting RTP media session...");
-    
-    // Parse remote SDP
-    let (remote_ip, remote_port, payload_type) = parse_sdp(response_sdp)?;
-    
-    println!("[RTP] Remote endpoint: {}:{}", remote_ip, remote_port);
-    println!("[RTP] Payload type: {} ({})", payload_type, 
-        if payload_type == 0 { "PCMU" } else if payload_type == 8 { "PCMA" } else { "Unknown" });
-    
-    // Create remote address
-    let remote_addr: std::net::SocketAddr = format!("{}:{}", remote_ip, remote_port)
-        .parse()
-        .map_err(|e| format!("Invalid remote address: {}", e))?;
-    
-    // Create RTP session
-    let rtp_session = Arc::new(
-        RtpSession::new(local_port, remote_addr, payload_type).await?
-    );
-    
-    println!("[RTP] ✓ RTP session created");
-    
-    // Initialize audio manager
-    println!("[Audio] Initializing audio devices...");
-    let mut audio_manager = AudioManager::new()?;
-    audio_manager.init_input()?;
-    audio_manager.init_output()?;
-    
-    // Start audio capture
-    let (input_stream, mut audio_rx) = audio_manager.start_capture()?;
-    
-    // Start audio playback
-    let (output_stream, audio_tx) = audio_manager.start_playback()?;
-    
-    println!("[Audio] ✓ Audio devices initialized");
+tracing::info!("[RTP] Starting RTP media session...");
+println!("[RTP] Starting RTP media session...");
+
+// Parse remote SDP
+let (remote_ip, remote_port, payload_type) = parse_sdp(response_sdp)?;
+
+tracing::info!("[RTP] Remote endpoint: {}:{}", remote_ip, remote_port);
+tracing::info!("[RTP] Payload type: {} ({})", payload_type,
+if payload_type == 0 { "PCMU" } else if payload_type == 8 { "PCMA" } else { "Unknown" });
+
+println!("[RTP] Remote endpoint: {}:{}", remote_ip, remote_port);
+println!("[RTP] Payload type: {} ({})", payload_type,
+if payload_type == 0 { "PCMU" } else if payload_type == 8 { "PCMA" } else { "Unknown" });
+
+// Create remote address
+let remote_addr: std::net::SocketAddr = format!("{}:{}", remote_ip, remote_port)
+.parse()
+.map_err(|e| format!("Invalid remote address: {}", e))?;
+
+// Create RTP session
+let rtp_session = Arc::new(
+RtpSession::new(local_port, remote_addr, payload_type).await?
+);
+
+tracing::info!("[RTP] ✓ RTP session created");
+println!("[RTP] ✓ RTP session created");
+
+// Initialize audio manager
+tracing::info!("[Audio] Initializing audio devices...");
+println!("[Audio] Initializing audio devices...");
+let mut audio_manager = AudioManager::new()?;
+audio_manager.init_input()?;
+audio_manager.init_output()?;
+
+// Start audio capture
+let (input_stream, mut audio_rx) = audio_manager.start_capture()?;
+
+// Start audio playback
+let (output_stream, audio_tx) = audio_manager.start_playback()?;
+
+tracing::info!("[Audio] ✓ Audio devices initialized");
+println!("[Audio] ✓ Audio devices initialized");
     
     // Keep streams alive by leaking them (they'll be cleaned up when tasks abort)
     // This is necessary because Stream is not Send and cannot be moved into tokio::spawn

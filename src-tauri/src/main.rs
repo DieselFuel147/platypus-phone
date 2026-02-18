@@ -4,6 +4,7 @@
 mod sip;
 mod rtp;
 mod audio;
+mod resample;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -260,6 +261,24 @@ async fn test_speaker(device_name: Option<String>) -> Result<String, String> {
 }
 
 fn main() {
+    // Initialize file logging
+    let log_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
+    
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "platypus-phone.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_target(false)
+        .init();
+    
+    tracing::info!("=== Platypus Phone Starting ===");
+    tracing::info!("Log file location: {}", log_dir.join("platypus-phone.log").display());
+    
     tauri::Builder::default()
         .manage(Mutex::new(SipState::default()))
         .invoke_handler(tauri::generate_handler![

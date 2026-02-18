@@ -22,6 +22,11 @@ uuid = { version = "1.0", features = ["v4"] }
 md5 = "0.7"
 # Audio dependencies
 cpal = "0.15"  # Cross-platform audio I/O
+rubato = "0.14"  # Sample rate conversion
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 # RTP will be implemented manually for now
 
 [features]
