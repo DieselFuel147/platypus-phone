@@ -987,6 +987,7 @@ pub async fn make_call(number: &str) -> Result<(), String> {
                 println!("[SIP] ✓ RTP media active - call has audio!");
             }
             Err(e) => {
+                tracing::error!("[RTP] Failed to start media: {}", e);
                 eprintln!("[RTP] Failed to start media: {}", e);
                 println!("[SIP] Call established but no audio (RTP failed)");
             }
@@ -1063,6 +1064,7 @@ pub async fn make_call(number: &str) -> Result<(), String> {
                             println!("[SIP] ✓ RTP media active - call has audio!");
                         }
                         Err(e) => {
+                            tracing::error!("[RTP] Failed to start media: {}", e);
                             eprintln!("[RTP] Failed to start media: {}", e);
                             println!("[SIP] Call established but no audio (RTP failed)");
                         }

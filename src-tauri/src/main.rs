@@ -5,6 +5,7 @@ mod sip;
 mod rtp;
 mod audio;
 mod resample;
+mod settings;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -260,6 +261,28 @@ async fn test_speaker(device_name: Option<String>) -> Result<String, String> {
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+// Save SIP credentials
+#[tauri::command]
+async fn save_sip_credentials(
+    server: String,
+    username: String,
+    password: String,
+) -> Result<(), String> {
+    settings::save_credentials(&server, &username, &password)
+}
+
+// Load SIP credentials
+#[tauri::command]
+async fn load_sip_credentials() -> Result<(String, String, String), String> {
+    settings::load_credentials()
+}
+
+// Clear saved SIP credentials
+#[tauri::command]
+async fn clear_sip_credentials() -> Result<(), String> {
+    settings::clear_credentials()
+}
+
 fn main() {
     // Initialize file logging
     let log_dir = std::env::current_exe()
@@ -291,7 +314,10 @@ fn main() {
             list_audio_input_devices,
             list_audio_output_devices,
             test_microphone,
-            test_speaker
+            test_speaker,
+            save_sip_credentials,
+            load_sip_credentials,
+            clear_sip_credentials
         ])
         .on_window_event(|event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {

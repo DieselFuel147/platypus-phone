@@ -82,6 +82,8 @@ npm run tauri dev
 - ✅ 401/407 authentication challenge handling
 - ✅ Automatic de-registration on app close
 - ✅ Clean shutdown handling
+- ✅ Persistent credential storage with password obfuscation
+- ✅ Automatic credential loading on app startup
 
 **What's in progress:**
 - ⚠️ INVITE request (outbound calls)
@@ -101,3 +103,11 @@ npm run tauri dev
 6. Add secure credential storage (OS keychain)
 
 See `docs/DESIGN_DOCUMENT.md` for full architecture details.
+
+## Features
+
+### Credential Storage
+
+Platypus automatically saves your SIP credentials between sessions. When you register successfully, your server address, username, and password are saved to disk with basic obfuscation. The next time you open the app, your credentials will be pre-filled.
+
+See `docs/CREDENTIALS_STORAGE.md` for details on how credentials are stored and secured.

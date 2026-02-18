@@ -1,11 +1,11 @@
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: #1a1a1a;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -25,12 +25,13 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
 }
 
 #root {
   width: 100%;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 1.5rem 1rem;
   text-align: center;
 }
 
@@ -69,13 +70,27 @@ button:focus-visible {
 }
 
 input {
-  padding: 0.6em;
+  padding: 0.7em;
   font-size: 1em;
-  border-radius: 4px;
-  border: 1px solid #646cff;
-  background-color: #1a1a1a;
+  border-radius: 8px;
+  border: 2px solid rgba(100, 108, 255, 0.3);
+  background-color: #242424;
   color: rgba(255, 255, 255, 0.87);
-  margin: 0.5em;
+  margin: 0.5em 0;
+  width: 100%;
+  max-width: 320px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input:focus {
+  border-color: #646cff;
+  outline: none;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 0 3px rgba(100, 108, 255, 0.1);
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .container {
@@ -83,11 +98,111 @@ input {
   margin: 0 auto;
 }
 
+/* Login Form styles */
+.login-form {
+  margin: 2em auto;
+  padding: 2em;
+  max-width: 360px;
+  background: linear-gradient(135deg, #242424 0%, #1a1a1a 100%);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.form-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 1.5em;
+  color: #646cff;
+}
+
+.form-group {
+  margin-bottom: 1em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.register-button {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.9em;
+  font-size: 1.05em;
+  font-weight: 600;
+  margin-top: 0.5em;
+  background: linear-gradient(135deg, #646cff 0%, #535bf2 100%);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+}
+
+.register-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(100, 108, 255, 0.4);
+}
+
+.register-button:active {
+  transform: translateY(0);
+}
+
+/* Header styles */
+.header {
+  position: relative;
+  padding: 1rem 0;
+  margin-bottom: 1rem;
+}
+
+.app-title {
+  font-size: 1.8rem;
+  font-weight: 600;
+  margin: 0;
+  color: #646cff;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.settings-icon {
+  position: absolute;
+  top: 0.5rem;
+  right: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 1.3rem;
+  background-color: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-icon:hover {
+  background-color: rgba(100, 108, 255, 0.2);
+  border-color: #646cff;
+  transform: rotate(45deg);
+}
+
+.settings-icon:active {
+  transform: rotate(45deg) scale(0.95);
+}
+
 .status {
-  padding: 1em;
+  padding: 0.8em;
   margin: 1em 0;
-  border-radius: 8px;
-  background-color: #1a1a1a;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #242424 0%, #1a1a1a 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.status h3 {
+  font-size: 0.95rem;
+  font-weight: 500;
+  margin-bottom: 0.3rem;
+}
+
+.status p {
+  font-size: 0.9rem;
+  margin: 0;
 }
 
 .status.connected {
@@ -105,35 +220,73 @@ input {
 .dialpad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin: 2em 0;
-  max-width: 300px;
-  margin-left: auto;
-  margin-right: auto;
+  gap: 8px;
+  margin: 1.2em auto;
+  max-width: 260px;
 }
 
 .dialpad button {
-  padding: 1.5em;
-  font-size: 1.2em;
+  padding: 1em;
+  font-size: 1.1em;
+  font-weight: 600;
+  border-radius: 50%;
+  aspect-ratio: 1;
+  background: linear-gradient(135deg, #646cff 0%, #535bf2 100%);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: all 0.15s ease;
+}
+
+.dialpad button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(100, 108, 255, 0.4);
+}
+
+.dialpad button:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .phone-input {
   width: 100%;
-  max-width: 300px;
-  font-size: 1.2em;
+  max-width: 280px;
+  font-size: 1.3em;
   text-align: center;
+  padding: 0.7em;
+  border-radius: 8px;
+  border: 2px solid rgba(100, 108, 255, 0.3);
+  background-color: #242424;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.2s ease;
+}
+
+.phone-input:focus {
+  border-color: #646cff;
+  outline: none;
 }
 
 .call-controls {
   display: flex;
   gap: 1em;
   justify-content: center;
-  margin: 2em 0;
+  margin: 1.5em 0 1em;
 }
 
 .call-controls button {
-  padding: 1em 2em;
-  font-size: 1.1em;
+  padding: 0.9em 1.8em;
+  font-size: 1.05em;
+  font-weight: 600;
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+}
+
+.call-controls button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+.call-controls button:active {
+  transform: translateY(0);
 }
 
 .call-controls button.answer {

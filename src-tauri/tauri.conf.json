@@ -34,8 +34,10 @@
         "fullscreen": false,
         "resizable": true,
         "title": "Platypus Phone",
-        "width": 400,
-        "height": 700
+        "width": 450,
+        "height": 750,
+        "minWidth": 400,
+        "minHeight": 650
       }
     ]
   }

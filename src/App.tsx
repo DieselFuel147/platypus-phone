@@ -36,6 +36,18 @@ function App() {
       }
     });
 
+    // Load saved credentials
+    invoke<[string, string, string]>("load_sip_credentials")
+      .then(([server, username, password]) => {
+        console.log("Loaded saved credentials");
+        if (server) setSipServer(server);
+        if (username) setSipUser(username);
+        if (password) setSipPassword(password);
+      })
+      .catch((error) => {
+        console.log("No saved credentials or error loading:", error);
+      });
+
     // Initialize SIP stack
     invoke("init_sip").then(() => {
       console.log("SIP stack initialized");
@@ -55,6 +67,14 @@ function App() {
         user: sipUser,
         password: sipPassword,
       });
+      
+      // Save credentials after successful registration
+      await invoke("save_sip_credentials", {
+        server: sipServer,
+        username: sipUser,
+        password: sipPassword,
+      });
+      console.log("Credentials saved");
     } catch (error) {
       console.error("Registration failed:", error);
       setCallState("INITIALIZED");
@@ -143,11 +163,11 @@ function App() {
 
   return (
     <div className="container">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>🦆 Platypus Phone</h1>
-        <button onClick={openSettings} style={{ fontSize: "1.5em", padding: "0.5em 1em" }}>
-          ⚙️ Audio Settings
+      <div className="header">
+        <button className="settings-icon" onClick={openSettings} title="Audio Settings">
+          ⚙️
         </button>
+        <h1 className="app-title">🦆 Platypus Phone</h1>
       </div>
       
       <div className={`status ${getStatusClass()}`}>
@@ -236,9 +256,9 @@ function App() {
       )}
 
       {!isRegistered && (
-        <div style={{ margin: "2em 0" }}>
-          <h3>SIP Account</h3>
-          <div>
+        <div className="login-form">
+          <h3 className="form-title">SIP Account</h3>
+          <div className="form-group">
             <input
               type="text"
               placeholder="SIP Server (e.g., sip.example.com)"
@@ -246,7 +266,7 @@ function App() {
               onChange={(e) => setSipServer(e.target.value)}
             />
           </div>
-          <div>
+          <div className="form-group">
             <input
               type="text"
               placeholder="Username"
@@ -254,7 +274,7 @@ function App() {
               onChange={(e) => setSipUser(e.target.value)}
             />
           </div>
-          <div>
+          <div className="form-group">
             <input
               type="password"
               placeholder="Password"
@@ -262,7 +282,9 @@ function App() {
               onChange={(e) => setSipPassword(e.target.value)}
             />
           </div>
-          <button onClick={handleRegister}>Register</button>
+          <button className="register-button" onClick={handleRegister}>
+            Register
+          </button>
         </div>
       )}
 
