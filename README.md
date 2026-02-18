@@ -1,34 +1,26 @@
-# Platypus Phone
+# Platypus
 
-Lightweight WebRTC-based desktop softphone built with React, SIP.js, and Tauri.
+Lightweight native desktop SIP softphone built with Tauri, Rust, and React.
 
-Platypus is a cross-platform SIP client designed to register directly to a PBX using standard SIP credentials. It uses WebRTC for secure media handling and is intended to provide a reliable, minimal-footprint alternative to traditional desktop softphone applications.
+Platypus connects directly to a PBX using standard SIP over UDP, TCP, or TLS. It is designed as a minimal, secure, and reliable alternative to traditional desktop softphones.
 
 ---
 
 ## Overview
 
-Platypus is being built as:
+Platypus is a cross-platform desktop application that:
 
-* A browser-based WebRTC SIP client (initial prototype)
-* Wrapped with Tauri for native desktop support (Windows & Linux)
-* PBX-agnostic and standards-compliant
-* Focused on reliability for queue-based call environments
+* Registers directly to a SIP PBX
+* Uses native RTP audio (no WebRTC)
+* Runs on Windows and Linux
+* Stores credentials securely using OS keychain
+* Requires no relay or proxy server
 
-The PBX backend handles:
-
-* Call routing
-* SIP trunks
-* Extensions
-* Queues
-* IVRs
-* Voicemail
-
-Platypus functions purely as a SIP endpoint.
+It functions purely as a SIP endpoint. All call routing and telephony logic is handled by the PBX.
 
 ---
 
-## Core Technology
+## Technology Stack
 
 Frontend:
 
@@ -36,18 +28,18 @@ Frontend:
 * TypeScript
 * Vite
 
-SIP & Media:
+Desktop Framework:
 
-* SIP.js
-* WebRTC (SRTP / DTLS / ICE)
+* Tauri
 
-Desktop Wrapper:
+Backend:
 
-* Tauri (Rust backend)
+* Rust
+* PJSIP (native SIP stack)
 
 ---
 
-## Current Status
+## Status
 
 Early development.
 
@@ -55,30 +47,6 @@ Initial focus:
 
 * SIP registration
 * Inbound and outbound calls
-* Basic call controls
-* WebRTC media validation
+* Native audio validation
 
-Tauri integration and production hardening will follow once the browser prototype is validated.
-
----
-
-## Goals
-
-* Lightweight desktop softphone
-* Secure by default (WSS + SRTP)
-* Low resource usage
-* Cross-platform (Windows + Linux)
-* Designed for future expansion
-
----
-
-## Future Direction
-
-* Native system tray integration
-* Secure credential storage
-* Call transfer & multi-call support
-* Mobile client (future phase)
-
----
-
-More detailed technical documentation and build instructions will be added as implementation progresses.
+More detailed build and architecture documentation will be added as implementation progresses.
