@@ -1,0 +1,475 @@
+# Custom WebRTC SIP Softphone
+
+Desktop (Browser + Tauri) Architecture Design Document
+
+---
+
+## 1. Overview
+
+This project aims to build a cross-platform desktop softphone client that:
+
+* Registers to a SIP PBX using extension credentials
+* Uses WebRTC for secure media
+* Supports inbound and outbound calls
+* Reliably handles queue calls
+* Provides OS-level notifications
+* Runs initially in a browser
+* Is later wrapped in Tauri for native desktop reliability
+
+The PBX backend (initially MaxoTel) handles:
+
+* SIP trunking
+* Call routing
+* Extensions
+* Queues
+* IVRs
+* Voicemail
+
+The client acts purely as a virtual SIP endpoint.
+
+---
+
+## 2. Goals
+
+* Desktop-first (Windows + Linux)
+* Small footprint
+* Low RAM usage
+* Reliable queue answering
+* Secure credential storage
+* PBX-agnostic SIP implementation
+* Modular architecture
+
+---
+
+## 3. Non-Goals (Initial Phase)
+
+* Native mobile VoIP
+* Custom PBX development
+* Call routing logic
+* Server-side telephony processing
+
+---
+
+## 4. High-Level Architecture
+
+```
+Tauri Wrapper
+   ├─ System Tray
+   ├─ Native Notifications
+   ├─ Secure Credential Storage
+   └─ Window Management
+        │
+React Frontend
+        │
+SIP.js (SIP over WSS)
+        │
+WebRTC (SRTP / DTLS / ICE)
+        │
+PBX (MaxoTel or compatible)
+```
+
+---
+
+## 5. Technology Stack
+
+### Frontend
+
+* React
+* TypeScript
+* Vite
+* Zustand (state management)
+* TailwindCSS (UI)
+
+### SIP & Media
+
+* SIP.js
+* WebRTC (native browser implementation)
+* SRTP
+* ICE + STUN/TURN support
+
+### Desktop Wrapper
+
+* Tauri
+* Rust backend (secure OS integration)
+
+---
+
+## 6. PBX Requirements
+
+The PBX must support:
+
+* SIP over WebSocket (WSS)
+* WebRTC media (SRTP + DTLS)
+* ICE negotiation
+* Opus codec (preferred)
+* NAT traversal
+
+Common compatible systems may include:
+
+* Asterisk-based systems
+* 3CX
+* FreePBX
+* BroadWorks
+* MaxoTel backend (WebRTC capability to be confirmed)
+
+---
+
+## 7. Functional Requirements
+
+### 7.1 Authentication
+
+User provides:
+
+* SIP username (extension)
+* SIP password
+* SIP server/domain
+* WSS endpoint (if required)
+
+System must:
+
+* Register via SIP REGISTER
+* Automatically re-register
+* Retry on connection loss
+
+---
+
+### 7.2 Call Handling
+
+#### Inbound
+
+* Receive INVITE
+* Show ringing UI
+* Trigger OS notification
+* Allow accept/reject
+* Establish WebRTC media
+
+#### Outbound
+
+* Dial numeric or SIP URI
+* Send INVITE
+* Display call states:
+
+  * Ringing
+  * Connected
+  * Ended
+
+---
+
+### 7.3 In-Call Controls
+
+* Mute / Unmute
+* Hold / Resume
+* DTMF
+* Hang up
+* Call timer
+* Audio device selection
+
+---
+
+### 7.4 Phase 2 Features
+
+* Blind transfer
+* Attended transfer
+* Multiple calls
+* Call waiting
+* Call history (local)
+* Presence status
+
+---
+
+## 8. Non-Functional Requirements
+
+### Reliability
+
+* Automatic SIP reconnect
+* WebSocket retry logic
+* ICE restart handling
+* Network change detection
+
+### Performance
+
+* Low memory usage
+* Minimal CPU overhead
+* Stable media handling
+
+### Security
+
+* WSS only
+* SRTP only
+* No plain credential storage
+* Encrypted local configuration
+* OS keychain integration via Tauri
+
+---
+
+## 9. Module Architecture
+
+```
+/src
+  /sip
+    sipClient.ts
+    sessionManager.ts
+    callController.ts
+
+  /ui
+    Dialer.tsx
+    CallView.tsx
+    IncomingCallModal.tsx
+    SettingsPanel.tsx
+    DeviceSelector.tsx
+
+  /state
+    authStore.ts
+    callStore.ts
+    deviceStore.ts
+```
+
+---
+
+## 10. Tauri Responsibilities
+
+* System tray support
+* Background running
+* Native OS notifications
+* Auto-start on login
+* Secure credential storage
+* Window lifecycle management
+* Audio focus handling
+
+Rust backend APIs:
+
+* store_credentials()
+* load_credentials()
+* delete_credentials()
+* set_auto_start()
+* show_notification()
+
+---
+
+## 11. Notifications Strategy
+
+### Browser Mode
+
+* Web Notification API
+* Tab must remain open
+
+### Tauri Mode
+
+* Native OS notifications
+* Notification click focuses window
+* Tray icon support
+* Background ringing alerts
+
+Queue reliability requires Tauri mode.
+
+---
+
+## 12. Network & NAT Strategy
+
+Client must support:
+
+* Configurable STUN server
+* Optional TURN server
+* TURN credentials
+
+Default:
+
+* Public STUN
+* Custom TURN if required
+
+---
+
+## 13. Call State Machine
+
+```
+IDLE
+  ↓
+REGISTERING
+  ↓
+REGISTERED
+  ↓
+INCOMING / OUTGOING
+  ↓
+RINGING
+  ↓
+ACTIVE
+  ↓
+HELD
+  ↓
+TERMINATED
+  ↓
+REGISTERED
+```
+
+---
+
+## 14. Security Model
+
+### Credential Handling
+
+* Never store in localStorage
+* Store encrypted via Tauri Rust backend
+* Use OS keychain when possible
+
+### Transport
+
+* Enforce HTTPS
+* Enforce WSS
+* Enforce SRTP media
+
+---
+
+# 15. Proof of Concept (Prototype Plan)
+
+This section defines a minimal build to validate feasibility quickly.
+
+## Objective
+
+Validate:
+
+* SIP registration
+* Inbound call
+* Outbound call
+* Working WebRTC audio
+
+No Tauri integration yet.
+
+---
+
+## Prototype Scope
+
+* Hardcoded SIP credentials
+* Single active call only
+* Basic UI
+* No persistent storage
+* Browser only
+
+---
+
+## Prototype Tech Stack
+
+* React
+* Vite
+* TypeScript
+* SIP.js
+
+---
+
+## Prototype Steps
+
+### 1. Create Project
+
+```
+npm create vite@latest softphone-prototype
+cd softphone-prototype
+npm install
+npm install sip.js
+```
+
+---
+
+### 2. Implement Minimal SIP Client
+
+* Connect to WSS endpoint
+* Register extension
+* Log registration state
+* Handle INVITE
+* Accept call
+* Attach media to `<audio>` element
+
+---
+
+### 3. Outbound Call
+
+* Input field for number
+* Call button
+* Trigger INVITE
+* Handle call state changes
+
+---
+
+### 4. Basic UI
+
+* Status indicator (Connected / Disconnected)
+* Dialer input
+* Call button
+* Hangup button
+* Incoming call modal
+
+---
+
+### 5. Validation Checklist
+
+Prototype is successful when:
+
+* Registration returns 200 OK
+* Incoming call rings in browser
+* Audio flows both directions
+* Outbound call connects successfully
+* Call can be terminated cleanly
+
+---
+
+## Prototype Risks to Validate Early
+
+* PBX WebRTC compatibility
+* Opus codec support
+* WSS certificate validity
+* NAT traversal
+* Microphone permissions
+* ICE negotiation success
+
+---
+
+# 16. Development Phases
+
+### Phase 1
+
+Browser prototype
+
+### Phase 2
+
+Configurable web client
+
+### Phase 3
+
+Tauri desktop wrapper
+
+### Phase 4
+
+Production hardening
+
+---
+
+# 17. Future Expansion
+
+* React Native mobile client
+* Push-based wake system
+* Call recording playback
+* CRM integration
+* Multi-account support
+* Web provisioning portal
+
+---
+
+# 18. Open Questions
+
+* Does MaxoTel expose WSS endpoint?
+* Does it support Opus?
+* Any required custom SIP headers?
+* How are queue calls delivered (standard INVITE)?
+
+These must be validated during prototype.
+
+---
+
+# 19. Summary
+
+This system will be:
+
+* React + SIP.js core
+* Wrapped in Tauri for desktop reliability
+* WebRTC-based
+* PBX-agnostic
+* Secure and lightweight
+* Designed for future expansion
