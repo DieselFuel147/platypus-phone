@@ -424,127 +424,169 @@ async fn send_with_auth(
 
     println!("[SIP] ✓ {} sent ({} bytes)", method, initial_request.len());
 
-    // Wait for response
+    // Wait for responses - may receive 100 Trying before 401
     let mut buf = vec![0u8; 4096];
-    let response_result = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        socket.recv_from(&mut buf)
-    ).await;
+    let mut auth_challenge: Option<String> = None;
+    
+    // Keep listening for responses until we get a final response or auth challenge
+    loop {
+        let response_result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            socket.recv_from(&mut buf)
+        ).await;
 
-    match response_result {
-        Ok(Ok((size, _))) => {
-            buf.truncate(size);
-            let response_str = String::from_utf8_lossy(&buf).to_string();
-            
-            // Check if authentication is required
-            if response_str.contains("SIP/2.0 401") || response_str.contains("SIP/2.0 407") {
-                println!("[SIP] Authentication required (401/407), retrying with auth...");
+        match response_result {
+            Ok(Ok((size, _))) => {
+                buf.truncate(size);
+                let response_str = String::from_utf8_lossy(&buf).to_string();
                 
-                // Parse auth parameters
-                let auth_params = parse_auth_header(&response_str)?;
+                println!("[SIP] Received response: {}", response_str.lines().next().unwrap_or(""));
                 
-                // Calculate digest
-                let auth_header = calculate_digest_response(
-                    username,
-                    password,
-                    method,
-                    uri,
-                    &auth_params,
-                )?;
+                // Check if this is a provisional response (1xx)
+                if response_str.contains("SIP/2.0 100") || 
+                   response_str.contains("SIP/2.0 180") || 
+                   response_str.contains("SIP/2.0 183") {
+                    println!("[SIP] Provisional response, waiting for final response...");
+                    buf = vec![0u8; 4096]; // Reset buffer
+                    continue; // Keep waiting
+                }
                 
-                // Rebuild request with Authorization header
-                // Find where to insert the Authorization header (before Content-Type or Content-Length)
-                let auth_request = if let Some(content_pos) = initial_request.find("Content-Type:") {
+                // Check if authentication is required
+                if response_str.contains("SIP/2.0 401") || response_str.contains("SIP/2.0 407") {
+                    println!("[SIP] Authentication required (401/407), retrying with auth...");
+                    auth_challenge = Some(response_str);
+                    break;
+                }
+                
+                // Any other response (2xx, 4xx, 5xx, 6xx) - return it
+                return Ok(response_str);
+            }
+            Ok(Err(e)) => return Err(format!("Socket error: {}", e)),
+            Err(_) => return Err(format!("Timeout waiting for {} response", method)),
+        }
+    }
+    
+    // If we got here, we have an auth challenge
+    if let Some(challenge) = auth_challenge {
+        // Parse auth parameters
+        let auth_params = parse_auth_header(&challenge)?;
+        
+        // Calculate digest
+        let auth_header = calculate_digest_response(
+            username,
+            password,
+            method,
+            uri,
+            &auth_params,
+        )?;
+        
+        // Rebuild request with Authorization header
+        // Find where to insert the Authorization header (before Content-Type or Content-Length)
+        let auth_request = if let Some(content_pos) = initial_request.find("Content-Type:") {
+            format!(
+                "{}Authorization: {}\r\n{}",
+                &initial_request[..content_pos],
+                auth_header,
+                &initial_request[content_pos..]
+            )
+        } else if let Some(content_pos) = initial_request.find("Content-Length:") {
+            format!(
+                "{}Authorization: {}\r\n{}",
+                &initial_request[..content_pos],
+                auth_header,
+                &initial_request[content_pos..]
+            )
+        } else if let Some(user_agent_pos) = initial_request.find("User-Agent:") {
+            // Insert after User-Agent line
+            if let Some(line_end) = initial_request[user_agent_pos..].find("\r\n") {
+                let insert_pos = user_agent_pos + line_end + 2;
+                format!(
+                    "{}Authorization: {}\r\n{}",
+                    &initial_request[..insert_pos],
+                    auth_header,
+                    &initial_request[insert_pos..]
+                )
+            } else {
+                return Err("Failed to parse request for auth insertion".to_string());
+            }
+        } else {
+            return Err("Failed to find insertion point for Authorization header".to_string());
+        };
+        
+        // Also need to update CSeq
+        let auth_request = auth_request.replace(
+            &format!("CSeq: 1 {}", method),
+            &format!("CSeq: 2 {}", method)
+        );
+        
+        // Update branch parameter
+        let new_branch = format!("z9hG4bK{}", uuid::Uuid::new_v4().simple());
+        let auth_request = if let Some(via_start) = auth_request.find("Via: ") {
+            if let Some(branch_start) = auth_request[via_start..].find("branch=") {
+                let abs_branch_start = via_start + branch_start + 7; // 7 = len("branch=")
+                if let Some(branch_end) = auth_request[abs_branch_start..].find(|c| c == ';' || c == '\r') {
+                    let abs_branch_end = abs_branch_start + branch_end;
                     format!(
-                        "{}Authorization: {}\r\n{}",
-                        &initial_request[..content_pos],
-                        auth_header,
-                        &initial_request[content_pos..]
+                        "{}{}{}",
+                        &auth_request[..abs_branch_start],
+                        new_branch,
+                        &auth_request[abs_branch_end..]
                     )
-                } else if let Some(content_pos) = initial_request.find("Content-Length:") {
-                    format!(
-                        "{}Authorization: {}\r\n{}",
-                        &initial_request[..content_pos],
-                        auth_header,
-                        &initial_request[content_pos..]
-                    )
-                } else if let Some(user_agent_pos) = initial_request.find("User-Agent:") {
-                    // Insert after User-Agent line
-                    if let Some(line_end) = initial_request[user_agent_pos..].find("\r\n") {
-                        let insert_pos = user_agent_pos + line_end + 2;
-                        format!(
-                            "{}Authorization: {}\r\n{}",
-                            &initial_request[..insert_pos],
-                            auth_header,
-                            &initial_request[insert_pos..]
-                        )
-                    } else {
-                        return Err("Failed to parse request for auth insertion".to_string());
-                    }
-                } else {
-                    return Err("Failed to find insertion point for Authorization header".to_string());
-                };
-                
-                // Also need to update CSeq
-                let auth_request = auth_request.replace(
-                    &format!("CSeq: 1 {}", method),
-                    &format!("CSeq: 2 {}", method)
-                );
-                
-                // Update branch parameter
-                let new_branch = format!("z9hG4bK{}", uuid::Uuid::new_v4().simple());
-                let auth_request = if let Some(via_start) = auth_request.find("Via: ") {
-                    if let Some(branch_start) = auth_request[via_start..].find("branch=") {
-                        let abs_branch_start = via_start + branch_start + 7; // 7 = len("branch=")
-                        if let Some(branch_end) = auth_request[abs_branch_start..].find(|c| c == ';' || c == '\r') {
-                            let abs_branch_end = abs_branch_start + branch_end;
-                            format!(
-                                "{}{}{}",
-                                &auth_request[..abs_branch_start],
-                                new_branch,
-                                &auth_request[abs_branch_end..]
-                            )
-                        } else {
-                            auth_request
-                        }
-                    } else {
-                        auth_request
-                    }
                 } else {
                     auth_request
-                };
-                
-                println!("[SIP] Sending authenticated {}...", method);
-                
-                // Send authenticated request
-                socket.send_to(auth_request.as_bytes(), server_addr).await
-                    .map_err(|e| format!("Failed to send authenticated {}: {}", method, e))?;
-                
-                println!("[SIP] ✓ Authenticated {} sent", method);
-                
-                // Wait for final response
-                let mut final_buf = vec![0u8; 4096];
-                let final_result = tokio::time::timeout(
-                    std::time::Duration::from_secs(timeout_secs),
-                    socket.recv_from(&mut final_buf)
-                ).await;
-                
-                match final_result {
-                    Ok(Ok((final_size, _))) => {
-                        final_buf.truncate(final_size);
-                        Ok(String::from_utf8_lossy(&final_buf).to_string())
-                    }
-                    Ok(Err(e)) => Err(format!("Socket error: {}", e)),
-                    Err(_) => Err(format!("Timeout waiting for authenticated {} response", method)),
                 }
             } else {
-                // No auth required or different response
-                Ok(response_str)
+                auth_request
+            }
+        } else {
+            auth_request
+        };
+        
+        println!("[SIP] Sending authenticated {}...", method);
+        println!("[SIP] Auth request (first 10 lines):");
+        for (i, line) in auth_request.lines().take(10).enumerate() {
+            println!("[SIP]   {}: {}", i+1, line);
+        }
+        
+        // Send authenticated request
+        socket.send_to(auth_request.as_bytes(), server_addr).await
+            .map_err(|e| format!("Failed to send authenticated {}: {}", method, e))?;
+        
+        println!("[SIP] ✓ Authenticated {} sent ({} bytes)", method, auth_request.len());
+        
+        // Wait for final response (may get provisional responses again)
+        loop {
+            let mut final_buf = vec![0u8; 4096];
+            let final_result = tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                socket.recv_from(&mut final_buf)
+            ).await;
+            
+            match final_result {
+                Ok(Ok((final_size, _))) => {
+                    final_buf.truncate(final_size);
+                    let final_response = String::from_utf8_lossy(&final_buf).to_string();
+                    
+                    println!("[SIP] Received response: {}", final_response.lines().next().unwrap_or(""));
+                    
+                    // Skip provisional responses
+                    if final_response.contains("SIP/2.0 100") || 
+                       final_response.contains("SIP/2.0 180") || 
+                       final_response.contains("SIP/2.0 183") {
+                        println!("[SIP] Provisional response, waiting for final response...");
+                        continue;
+                    }
+                    
+                    // Return any final response
+                    return Ok(final_response);
+                }
+                Ok(Err(e)) => return Err(format!("Socket error: {}", e)),
+                Err(_) => return Err(format!("Timeout waiting for authenticated {} response", method)),
             }
         }
-        Ok(Err(e)) => Err(format!("Socket error: {}", e)),
-        Err(_) => Err(format!("Timeout waiting for {} response", method)),
     }
+    
+    Err("No auth challenge received".to_string())
 }
 
 pub async fn make_call(number: &str) -> Result<(), String> {
@@ -813,13 +855,14 @@ async fn send_ack(
         format!("<{}>", dest_uri)
     };
     
+    // ACK CSeq must match the INVITE CSeq (which is 2 after auth retry)
     let ack_msg = format!(
         "ACK {} SIP/2.0\r\n\
          Via: SIP/2.0/UDP {};branch={}\r\n\
          From: <{}>;tag={}\r\n\
          To: {}\r\n\
          Call-ID: {}\r\n\
-         CSeq: 1 ACK\r\n\
+         CSeq: 2 ACK\r\n\
          Max-Forwards: 70\r\n\
          User-Agent: Platypus-Phone/0.1.0\r\n\
          Content-Length: 0\r\n\
@@ -834,6 +877,7 @@ async fn send_ack(
     );
 
     println!("[SIP] Sending ACK...");
+    println!("[SIP] ACK message:\n{}", ack_msg);
     
     socket.send_to(ack_msg.as_bytes(), server_addr).await
         .map_err(|e| format!("Failed to send ACK: {}", e))?;
