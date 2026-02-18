@@ -36,6 +36,7 @@ src-tauri/WixTools
 *.njsproj
 *.sln
 *.sw?
+.qodo/
 
 # OS
 .DS_Store
