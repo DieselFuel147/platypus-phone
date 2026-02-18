@@ -3,19 +3,25 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SipCredentials {
+pub struct AppSettings {
     pub server: String,
     pub username: String,
     #[serde(default)]
     pub password_encrypted: String,
+    #[serde(default)]
+    pub audio_input_device: String,
+    #[serde(default)]
+    pub audio_output_device: String,
 }
 
-impl Default for SipCredentials {
+impl Default for AppSettings {
     fn default() -> Self {
         Self {
             server: String::new(),
             username: String::new(),
             password_encrypted: String::new(),
+            audio_input_device: String::new(),
+            audio_output_device: String::new(),
         }
     }
 }
@@ -72,60 +78,93 @@ fn get_settings_path() -> Result<PathBuf, String> {
     Ok(app_dir.join("settings.json"))
 }
 
-/// Save SIP credentials to disk
-pub fn save_credentials(server: &str, username: &str, password: &str) -> Result<(), String> {
-    let credentials = SipCredentials {
-        server: server.to_string(),
-        username: username.to_string(),
-        password_encrypted: obfuscate_password(password),
-    };
-    
-    let settings_path = get_settings_path()?;
-    let json = serde_json::to_string_pretty(&credentials)
-        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
-    
-    fs::write(&settings_path, json)
-        .map_err(|e| format!("Failed to write settings file: {}", e))?;
-    
-    tracing::info!("Saved credentials to: {}", settings_path.display());
-    Ok(())
-}
-
-/// Load SIP credentials from disk
-pub fn load_credentials() -> Result<(String, String, String), String> {
+/// Load all settings from disk
+fn load_settings() -> Result<AppSettings, String> {
     let settings_path = get_settings_path()?;
     
     if !settings_path.exists() {
-        return Ok((String::new(), String::new(), String::new()));
+        return Ok(AppSettings::default());
     }
     
     let json = fs::read_to_string(&settings_path)
         .map_err(|e| format!("Failed to read settings file: {}", e))?;
     
-    let credentials: SipCredentials = serde_json::from_str(&json)
+    let settings: AppSettings = serde_json::from_str(&json)
         .map_err(|e| format!("Failed to parse settings file: {}", e))?;
     
-    let password = if credentials.password_encrypted.is_empty() {
-        String::new()
-    } else {
-        deobfuscate_password(&credentials.password_encrypted)?
-    };
-    
-    tracing::info!("Loaded credentials from: {}", settings_path.display());
-    Ok((credentials.server, credentials.username, password))
+    tracing::info!("Loaded settings from: {}", settings_path.display());
+    Ok(settings)
 }
 
-/// Clear saved credentials
-pub fn clear_credentials() -> Result<(), String> {
+/// Save all settings to disk
+fn save_settings(settings: &AppSettings) -> Result<(), String> {
+    let settings_path = get_settings_path()?;
+    let json = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    
+    fs::write(&settings_path, json)
+        .map_err(|e| format!("Failed to write settings file: {}", e))?;
+    
+    tracing::info!("Saved settings to: {}", settings_path.display());
+    Ok(())
+}
+
+/// Save SIP credentials to disk
+pub fn save_credentials(server: &str, username: &str, password: &str) -> Result<(), String> {
+    let mut settings = load_settings()?;
+    
+    settings.server = server.to_string();
+    settings.username = username.to_string();
+    settings.password_encrypted = obfuscate_password(password);
+    
+    save_settings(&settings)
+}
+
+/// Load SIP credentials from disk
+pub fn load_credentials() -> Result<(String, String, String), String> {
+    let settings = load_settings()?;
+    
+    let password = if settings.password_encrypted.is_empty() {
+        String::new()
+    } else {
+        deobfuscate_password(&settings.password_encrypted)?
+    };
+    
+    Ok((settings.server, settings.username, password))
+}
+
+/// Save audio device preferences
+pub fn save_audio_devices(input_device: &str, output_device: &str) -> Result<(), String> {
+    let mut settings = load_settings()?;
+    
+    settings.audio_input_device = input_device.to_string();
+    settings.audio_output_device = output_device.to_string();
+    
+    save_settings(&settings)
+}
+
+/// Load audio device preferences
+pub fn load_audio_devices() -> Result<(String, String), String> {
+    let settings = load_settings()?;
+    Ok((settings.audio_input_device, settings.audio_output_device))
+}
+
+/// Clear all saved settings
+pub fn clear_settings() -> Result<(), String> {
     let settings_path = get_settings_path()?;
     
     if settings_path.exists() {
         fs::remove_file(&settings_path)
             .map_err(|e| format!("Failed to delete settings file: {}", e))?;
-        tracing::info!("Cleared credentials");
+        tracing::info!("Cleared all settings");
     }
     
     Ok(())
+}
+
+// Keep old function name for backward compatibility
+pub fn clear_credentials() -> Result<(), String> {
+    clear_settings()
 }
 
 #[cfg(test)]

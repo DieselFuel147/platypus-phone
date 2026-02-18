@@ -283,6 +283,21 @@ async fn clear_sip_credentials() -> Result<(), String> {
     settings::clear_credentials()
 }
 
+// Save audio device preferences
+#[tauri::command]
+async fn save_audio_devices(
+    input_device: String,
+    output_device: String,
+) -> Result<(), String> {
+    settings::save_audio_devices(&input_device, &output_device)
+}
+
+// Load audio device preferences
+#[tauri::command]
+async fn load_audio_devices() -> Result<(String, String), String> {
+    settings::load_audio_devices()
+}
+
 fn main() {
     // Initialize file logging
     let log_dir = std::env::current_exe()
@@ -317,7 +332,9 @@ fn main() {
             test_speaker,
             save_sip_credentials,
             load_sip_credentials,
-            clear_sip_credentials
+            clear_sip_credentials,
+            save_audio_devices,
+            load_audio_devices
         ])
         .on_window_event(|event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {

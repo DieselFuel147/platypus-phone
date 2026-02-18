@@ -27,10 +27,16 @@ The password is **obfuscated** using a simple XOR-based encryption with a fixed 
 
 ### What Gets Saved
 
-When you successfully register with a SIP server, the following information is saved:
+The app saves the following settings:
+
+**SIP Credentials** (saved automatically on successful registration):
 - SIP Server address
 - Username
 - Password (obfuscated)
+
+**Audio Devices** (saved when you click "Save & Close" in Audio Settings):
+- Selected microphone/input device
+- Selected speaker/output device
 
 ### Automatic Loading
 
@@ -65,10 +71,12 @@ The frontend automatically:
 
 ### Tauri Commands
 
-Three new Tauri commands are available:
-- `save_sip_credentials` - Save credentials
-- `load_sip_credentials` - Load credentials
-- `clear_sip_credentials` - Clear saved credentials
+Five new Tauri commands are available:
+- `save_sip_credentials` - Save SIP credentials
+- `load_sip_credentials` - Load SIP credentials
+- `clear_sip_credentials` - Clear all saved settings
+- `save_audio_devices` - Save audio device preferences
+- `load_audio_devices` - Load audio device preferences
 
 ## Works with Built .exe
 

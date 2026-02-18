@@ -124,8 +124,29 @@ function App() {
       const outputs = await invoke<string[]>("list_audio_output_devices");
       setInputDevices(inputs);
       setOutputDevices(outputs);
-      if (inputs.length > 0 && !selectedInput) setSelectedInput(inputs[0]);
-      if (outputs.length > 0 && !selectedOutput) setSelectedOutput(outputs[0]);
+      
+      // Load saved device preferences
+      try {
+        const [savedInput, savedOutput] = await invoke<[string, string]>("load_audio_devices");
+        
+        // Use saved devices if they exist in the available devices list
+        if (savedInput && inputs.includes(savedInput)) {
+          setSelectedInput(savedInput);
+        } else if (inputs.length > 0 && !selectedInput) {
+          setSelectedInput(inputs[0]);
+        }
+        
+        if (savedOutput && outputs.includes(savedOutput)) {
+          setSelectedOutput(savedOutput);
+        } else if (outputs.length > 0 && !selectedOutput) {
+          setSelectedOutput(outputs[0]);
+        }
+      } catch (error) {
+        console.log("No saved audio devices or error loading:", error);
+        // Fall back to defaults
+        if (inputs.length > 0 && !selectedInput) setSelectedInput(inputs[0]);
+        if (outputs.length > 0 && !selectedOutput) setSelectedOutput(outputs[0]);
+      }
     } catch (error) {
       console.error("Failed to load audio devices:", error);
       setTestResult(`Error: ${error}`);
@@ -159,6 +180,20 @@ function App() {
   const openSettings = () => {
     setShowSettings(true);
     loadAudioDevices();
+  };
+
+  const saveAudioSettings = async () => {
+    try {
+      await invoke("save_audio_devices", {
+        inputDevice: selectedInput,
+        outputDevice: selectedOutput,
+      });
+      console.log("Audio device preferences saved");
+      setShowSettings(false);
+    } catch (error) {
+      console.error("Failed to save audio device preferences:", error);
+      setTestResult(`Error saving preferences: ${error}`);
+    }
   };
 
   return (
@@ -225,12 +260,15 @@ function App() {
               </div>
             )}
 
-            <div style={{ marginTop: "1em" }}>
-              <button onClick={loadAudioDevices} style={{ marginRight: "0.5em" }}>
-                🔄 Refresh Devices
+            <div style={{ marginTop: "1em", display: "flex", gap: "0.5em" }}>
+              <button onClick={loadAudioDevices} style={{ flex: 1 }}>
+                🔄 Refresh
               </button>
-              <button onClick={() => setShowSettings(false)}>
-                Close
+              <button onClick={saveAudioSettings} style={{ flex: 1, backgroundColor: "#4CAF50", color: "white" }}>
+                💾 Save & Close
+              </button>
+              <button onClick={() => setShowSettings(false)} style={{ flex: 1 }}>
+                Cancel
               </button>
             </div>
 
@@ -256,9 +294,9 @@ function App() {
       )}
 
       {!isRegistered && (
-        <div className="login-form">
-          <h3 className="form-title">SIP Account</h3>
-          <div className="form-group">
+        <div style={{ margin: "2em 0" }}>
+          <h3>SIP Account</h3>
+          <div>
             <input
               type="text"
               placeholder="SIP Server (e.g., sip.example.com)"
@@ -266,7 +304,7 @@ function App() {
               onChange={(e) => setSipServer(e.target.value)}
             />
           </div>
-          <div className="form-group">
+          <div>
             <input
               type="text"
               placeholder="Username"
@@ -274,7 +312,7 @@ function App() {
               onChange={(e) => setSipUser(e.target.value)}
             />
           </div>
-          <div className="form-group">
+          <div>
             <input
               type="password"
               placeholder="Password"
@@ -282,9 +320,7 @@ function App() {
               onChange={(e) => setSipPassword(e.target.value)}
             />
           </div>
-          <button className="register-button" onClick={handleRegister}>
-            Register
-          </button>
+          <button onClick={handleRegister}>Register</button>
         </div>
       )}
 
